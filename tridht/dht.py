@@ -388,7 +388,7 @@ class Dht:
             b'y': b'r',
             b'r': {
                 b'id': self.node_id,
-                b'nodes': compact_nodes,
+                b'nodes': nodes,
             }
         }
 
