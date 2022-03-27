@@ -64,7 +64,6 @@ class Dht:
             nursery.start_soon(self._keep_token_secrets_updated)
             nursery.start_soon(self._seed_routing_table)
             nursery.start_soon(self._peer_table.run)
-            nursery.start_soon(self.foobar)
 
             while True:
                 data, addr = await self._sock.recvfrom(8192)
@@ -72,42 +71,6 @@ class Dht:
                 nursery.start_soon(self._process_msg, data, addr)
 
         logger.info(f'DHT on port {self.port} finished.')
-
-    async def foobar(self):
-        while True:
-            await trio.sleep(20)
-
-            rtnodes = list(self._routing_table.get_all_nodes())
-            if not rtnodes:
-                continue
-            queried_node = random.choice(rtnodes)
-
-            random_node_id = get_random_node_id()
-            resp = await self._perform_find_node(queried_node, random_node_id)
-            if resp is None:
-                logger.info(f'foobar: no response to foobar query')
-                continue
-
-            if isinstance(resp, DhtErrorMessage):
-                logger.info('Got an error response in foobar')
-                continue
-
-            if not isinstance(resp, DhtResponseMessage):
-                logger.info('foobar received invalid response to query.')
-
-            nodes = self._parse_find_node_response(resp)
-            if nodes is None:
-                logger.info('foobar did not receive a valid response')
-                continue
-
-            if len(nodes) == 0:
-                logger.info('Got an empty node list in foobar')
-                continue
-
-            logger.info(f'foobar got {len(nodes)} nodes.')
-
-            for node in nodes:
-                self._routing_table.add_node(node)
 
     async def _keep_token_secrets_updated(self):
         self._prev_token_secret = os.urandom(16)
