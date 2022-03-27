@@ -4,6 +4,7 @@ import time
 import os
 import trio
 from ipaddress import IPv4Address
+from copy import copy
 from trio import socket
 from .bencode import bencode, bdecode, BDecodingError
 from .routing_table import RoutingTable
@@ -541,7 +542,7 @@ class Dht:
     def retry_add_node_after_refresh(self, node_to_add,
                                      nodes_to_refresh):
         self._nursery.start_soon(self._retry_add_node_after_refresh,
-                                node_to_add, nodes_to_refresh)
+                                node_to_add, copy(nodes_to_refresh))
 
     def _get_next_tid(self):
         ret = self._next_tid.to_bytes(length=2,
