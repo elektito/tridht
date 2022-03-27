@@ -146,7 +146,7 @@ class RoutingTable:
         return (self.min_id <= node_id < self.max_id)
 
     def _split(self):
-        middle = (self.max_id - self.min_id) // 2
+        middle = self.min_id + (self.max_id - self.min_id) // 2
         self._first_half = RoutingTable(
             self.dht, self.min_id, middle)
         self._second_half = RoutingTable(
