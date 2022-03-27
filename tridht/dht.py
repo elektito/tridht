@@ -6,6 +6,7 @@ import trio
 from ipaddress import IPv4Address
 from copy import copy
 from trio import socket
+from crc32c import crc32c
 from .bencode import bencode, bdecode, BDecodingError
 from .routing_table import RoutingTable
 from .peer_table import PeerTable
@@ -321,6 +322,12 @@ class Dht:
             }
             found_errors = True
 
+        if not self._validate_bep42_node_id(node_id, addr[0]):
+            # we may decide to not allow non-compliant nodes to do
+            # announce_peer or store queries later, and possibly also
+            # not add them to the routing table.
+            logger.debug('Node ID is not BEP42-compliant (not enforced).')
+
         if not found_errors:
             if method == b'ping':
                 resp = {
@@ -590,6 +597,23 @@ class Dht:
             ret_nodes.append(Node(node_id, node_ip, node_port))
 
         return ret_nodes
+
+    def _validate_bep42_node_id(self, node_id, ip):
+        rand = node_id[-1]
+        r = rand & 0x07
+
+        ip = int(IPv4Address(ip))
+        ip &= 0x030f3fff
+        ip |= r << (5+24)
+        crc = crc32c(ip.to_bytes(length=4, byteorder='big', signed=False))
+
+        crc_first_21_bits = crc >> 11
+        nid_first_21_bits = int.from_bytes(node_id[:3],
+                                           byteorder='big',
+                                           signed=False)
+        nid_first_21_bits >>= 3
+        return crc_first_21_bits == nid_first_21_bits
+
 
     async def _retry_add_node_after_refresh(self, node_to_add, nodes_to_refresh):
         for node in nodes_to_refresh:
