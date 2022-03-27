@@ -90,6 +90,9 @@ class RoutingTable:
 
     def get_close_nodes(self, node_id, compact=False):
         distances = {}
+        node_id = int.from_bytes(node_id,
+                                 byteorder='big',
+                                 signed=False)
         for node in self.get_all_nodes():
             nid = int.from_bytes(node.id,
                                  byteorder='big',
