@@ -125,8 +125,18 @@ class Dht:
         if len(nodes) == 0:
             raise RuntimeError('Seed node did not return any nodes.')
 
-        for node in nodes:
+        async def ping_and_add_node(node):
+            resp = await self._ping_node(node)
+            if resp is None:
+                logger.info(
+                    'Node obtained from seed did not reply to ping.')
+                return
+            node.last_response_time = time.time()
+            node.ever_responded = True
             self._routing_table.add_node(node)
+        async with trio.open_nursery() as nursery:
+            for node in nodes:
+                nursery.start_soon(ping_and_add_node, node)
 
         # seed node is now probably added to the routing table. remove
         # it.
