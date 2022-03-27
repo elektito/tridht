@@ -67,7 +67,7 @@ class Dht:
 
             while True:
                 data, addr = await self._sock.recvfrom(8192)
-                logger.info(f'Received {len(data)} bytes from {addr[0]}:{addr[1]}.')
+                logger.debug(f'Received {len(data)} bytes from {addr[0]}:{addr[1]}.')
                 nursery.start_soon(self._process_msg, data, addr)
 
         logger.info(f'DHT on port {self.port} finished.')
@@ -176,7 +176,8 @@ class Dht:
             return
 
     async def _process_error(self, msg, tid, addr):
-        print('Got error:', msg)
+        logger.debug(f'Got error packet: {msg}')
+
         e = msg.get(b'e')
         if e is None:
             logger.info(
@@ -221,7 +222,8 @@ class Dht:
                 'Got an error packet not corresponding to any query.')
 
     async def _process_response(self, msg, tid, addr):
-        print('Got resposne:', msg)
+        logger.debug(f'Got response packet: {msg}')
+
         r = msg.get(b'r')
         if r is None:
             logger.info(
@@ -296,8 +298,9 @@ class Dht:
                 self._self_ip_votes = {}
 
     async def _process_query(self, msg, tid, addr):
+        logger.debug(f'Got query packet: {msg}')
+
         found_errors = False
-        print('Got query:', msg)
 
         method = msg.get(b'q')
         if method is None:
