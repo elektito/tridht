@@ -105,7 +105,7 @@ class RoutingTable:
         distances = distances[:K]
 
         nodes = b'' if compact else []
-        for node in distances:
+        for node, dist in distances:
             if compact:
                 nodes += (
                     node.id +
