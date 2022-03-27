@@ -279,7 +279,10 @@ class Dht:
 
         resp_channel = self._response_channels.get(tid)
         if resp_channel:
-            await resp_channel.send(resp_msg)
+            try:
+                await resp_channel.send(resp_msg)
+            except trio.ClosedResourceError:
+                logger.debug('Response channel already closed.')
         else:
             logger.info(
                 'Got an response packet not corresponding to any '
