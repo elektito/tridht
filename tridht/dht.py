@@ -312,6 +312,7 @@ class Dht:
 
         if not found_errors:
             if method == b'ping':
+                logger.info(f'Got a ping query from {node_id.hex()}')
                 resp = {
                     b't': tid,
                     b'y': b'r',
@@ -350,8 +351,12 @@ class Dht:
                 b'e': [203, b'find_node query has no target'],
             }
 
-        nodes = self._routing_table.get_close_nodes(info_hash,
-                                                    compact=True)
+        logger.info(
+            f'Got a find_node query from {node_id.hex()} for node '
+            f'{target.hex()}')
+
+        nodes = self._routing_table.get_close_nodes(
+            target, compact=True)
         return {
             b't': tid,
             b'y': b'r',
@@ -370,6 +375,10 @@ class Dht:
                 b'y': b'e',
                 b'e': [203, b'get_peers query has no info_hash'],
             }
+
+        logger.info(
+            f'Got a get_peers query from {node_id.hex()} for info_hash '
+            f'{info_hash.hex()}')
 
         peers = self._peer_table.get_peers(info_hash)
         if peers:
@@ -412,6 +421,10 @@ class Dht:
                 b'y': b'e',
                 b'e': [203, b'announce_peer query has no info_hash'],
             }
+
+        logger.info(
+            f'Got an announce_peer query from {node_id.hex()} for '
+            f'info_hash {info_hash.hex()}')
 
         token = args.get(b'token')
         if token is None:
