@@ -259,44 +259,6 @@ class Dht:
         self._routing_table.add_or_update_node(
             node_id, addr[0], addr[1], interaction='response')
 
-    def _process_self_ip(self, msg, voter_addr):
-        if len(self._self_ip_votes) >= 3:
-            return
-
-        ip_port = msg.get(b'ip')
-        if ip_port is None:
-            return
-
-        if not isinstance(ip_port, bytes) or len(ip_port) != 6:
-            logger.debug('Invalid ip field.')
-            return
-
-        ip = IPv4Address(ip_port[:4])
-        self._self_ip_votes[voter_addr] = ip
-
-        if len(self._self_ip_votes) == 3:
-            ips = list(self._self_ip_votes.values())
-            if ips[0] == ips[1] == ips[2]:
-                self._ip = ips[0]
-                logger.info(f'Self-IP voted as: {self._ip}')
-
-                self.node_id = self._generate_bep42_node_id(ip)
-
-                # clear routing table and add nodes again based on the
-                # new node id
-                nodes = list(self._routing_table.get_all_nodes())
-                self._routing_table.clear()
-                for node in nodes:
-                    self._routing_table.add_node(node)
-
-                logger.info(
-                    f'Changed node ID to the BEP-42 compliant value: '
-                    f'{self.node_id.hex()}')
-            else:
-                logger.info(
-                    f'First three self-IPs do not match. Trying again.')
-                self._self_ip_votes = {}
-
     async def _process_query(self, msg, tid, addr):
         logger.debug(f'Got query packet: {msg}')
 
@@ -485,6 +447,44 @@ class Dht:
             b'y': b'r',
             b'r': {b'id': self.node_id},
         }
+
+    def _process_self_ip(self, msg, voter_addr):
+        if len(self._self_ip_votes) >= 3:
+            return
+
+        ip_port = msg.get(b'ip')
+        if ip_port is None:
+            return
+
+        if not isinstance(ip_port, bytes) or len(ip_port) != 6:
+            logger.debug('Invalid ip field.')
+            return
+
+        ip = IPv4Address(ip_port[:4])
+        self._self_ip_votes[voter_addr] = ip
+
+        if len(self._self_ip_votes) == 3:
+            ips = list(self._self_ip_votes.values())
+            if ips[0] == ips[1] == ips[2]:
+                self._ip = ips[0]
+                logger.info(f'Self-IP voted as: {self._ip}')
+
+                self.node_id = self._generate_bep42_node_id(ip)
+
+                # clear routing table and add nodes again based on the
+                # new node id
+                nodes = list(self._routing_table.get_all_nodes())
+                self._routing_table.clear()
+                for node in nodes:
+                    self._routing_table.add_node(node)
+
+                logger.info(
+                    f'Changed node ID to the BEP-42 compliant value: '
+                    f'{self.node_id.hex()}')
+            else:
+                logger.info(
+                    f'First three self-IPs do not match. Trying again.')
+                self._self_ip_votes = {}
 
     async def _send_and_get_response(self, msg, node):
         assert isinstance(msg, dict)
