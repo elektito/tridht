@@ -504,6 +504,16 @@ class Dht:
         else:
             addr = node
 
+        msg[b'v'] = b'TD\x00\x01'
+
+        if msg[b'y'] in [b'r', b'e']:
+            ip, port = addr
+            ip = IPv4Address(ip).packed
+            port = port.to_bytes(length=2,
+                                 byteorder='big',
+                                 signed=False)
+            msg[b'ip'] = ip + port
+
         msg = bencode(msg)
         await self._sock.sendto(msg, addr)
 
