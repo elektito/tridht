@@ -129,6 +129,11 @@ class RoutingTable:
             except KeyError:
                 pass
 
+    def clear(self):
+        self._first_half = None
+        self._second_half = None
+        self._nodes = set()
+
     def get_all_nodes(self):
         if self._is_split:
             yield from self._first_half.get_all_nodes()

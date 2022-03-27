@@ -46,6 +46,8 @@ class Dht:
         self._peer_table = PeerTable()
         self._response_channels = {}
         self._next_tid = 0
+        self._self_ip_votes = {}
+        self._ip = None
 
         self._prev_token_secret = None
         self._cur_token_secret = None
@@ -279,6 +281,7 @@ class Dht:
 
         resp_channel = self._response_channels.get(tid)
         if resp_channel:
+            self._process_self_ip(msg, addr)
             try:
                 await resp_channel.send(resp_msg)
             except trio.ClosedResourceError:
@@ -290,6 +293,44 @@ class Dht:
 
         self._routing_table.add_or_update_node(
             node_id, addr[0], addr[1], interaction='response')
+
+    def _process_self_ip(self, msg, voter_addr):
+        if len(self._self_ip_votes) >= 3:
+            return
+
+        ip_port = msg.get(b'ip')
+        if ip_port is None:
+            return
+
+        if not isinstance(ip_port, bytes) or len(ip_port) != 6:
+            logger.debug('Invalid ip field.')
+            return
+
+        ip = IPv4Address(ip_port[:4])
+        self._self_ip_votes[voter_addr] = ip
+
+        if len(self._self_ip_votes) == 3:
+            ips = list(self._self_ip_votes.values())
+            if ips[0] == ips[1] == ips[2]:
+                self._ip = ips[0]
+                logger.info(f'Self-IP voted as: {self._ip}')
+
+                self.node_id = self._generate_bep42_node_id(ip)
+
+                # clear routing table and add nodes again based on the
+                # new node id
+                nodes = list(self._routing_table.get_all_nodes())
+                self._routing_table.clear()
+                for node in nodes:
+                    self._routing_table.add_node(node)
+
+                logger.info(
+                    f'Changed node ID to the BEP-42 compliant value: '
+                    f'{self.node_id.hex()}')
+            else:
+                logger.info(
+                    f'First three self-IPs do not match. Trying again.')
+                self._self_ip_votes = {}
 
     async def _process_query(self, msg, tid, addr):
         found_errors = False
@@ -617,6 +658,24 @@ class Dht:
         nid_first_21_bits >>= 3
         return crc_first_21_bits == nid_first_21_bits
 
+    def _generate_bep42_node_id(self, ip: IPv4Address):
+        nid = bytearray(os.urandom(20))
+
+        rand = random.randint(0, 255)
+        r = rand & 0x07
+
+        ip = int(IPv4Address(ip))
+        ip &= 0x030f3fff
+        ip |= r << (5+24)
+        crc = crc32c(ip.to_bytes(length=4, byteorder='big', signed=False))
+
+        nid[0] = (crc >> 24) & 0xff
+        nid[1] = (crc >> 16) & 0xff
+        nid[2] = ((crc >> 8) & 0xf8) | (random.randint(0, 255) & 0x07)
+
+        nid[-1] = rand
+
+        return bytes(nid)
 
     async def _retry_add_node_after_refresh(self, node_to_add, nodes_to_refresh):
         for node in nodes_to_refresh:
