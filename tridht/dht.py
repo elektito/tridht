@@ -69,7 +69,13 @@ class Dht:
             nursery.start_soon(self._peer_table.run)
 
             while True:
-                data, addr = await self._sock.recvfrom(8192)
+                try:
+                    data, addr = await self._sock.recvfrom(8192)
+                except trio.ClosedResourceError:
+                    # another task has closed the socket, so an error
+                    # has happened (probably while initializing)
+                    nursery.cancel_scope.cancel()
+                    break
                 logger.debug(f'Received {len(data)} bytes from {addr[0]}:{addr[1]}.')
                 nursery.start_soon(self._process_msg, data, addr)
 
@@ -85,16 +91,24 @@ class Dht:
             logger.info('Updated token secret.')
 
     async def _seed_routing_table(self):
+        await self._seed_routing_table_from(
+            self._seed_host, self._seed_port)
+
+        if self._routing_table.size() == 0:
+            logger.critical('Could not seed routing table.')
+            self._sock.close()
+
+    async def _seed_routing_table_from(self, seed_host, seed_port):
         logger.info('Seeding routing table...')
 
         logger.info('Resolving seed host name...')
         try:
-            addrs = await socket.getaddrinfo(self._seed_host,
-                                             port=self._seed_port,
+            addrs = await socket.getaddrinfo(seed_host,
+                                             port=seed_port,
                                              family=socket.AF_INET,
                                              type=socket.SOCK_DGRAM)
         except socket.gaierror as e:
-            logger.fatal(f'Could not resolve seed host name: {e}')
+            logger.error(f'Could not resolve seed host name: {e}')
             return
         if not addrs:
             logger.fatal(f'No IP addresses found for the seed host name.')
@@ -111,22 +125,26 @@ class Dht:
         random_node_id = get_random_node_id()
         resp = await self._perform_find_node(seed_node, random_node_id)
         if resp is None:
-            raise RuntimeError('Seed node did not respond to query.')
+            logger.error('Seed node did not respond to query.')
+            return
 
         if isinstance(resp, DhtErrorMessage):
-            raise RuntimeError(
+            logger.error(
                 f'Seed node returned an error to query: {resp}')
+            return
 
         if not isinstance(resp, DhtResponseMessage):
-            raise RuntimeError(
+            logger.error(
                 'Seed node returned invalid response to query.')
+            return
 
         nodes = self._parse_find_node_response(resp)
         if nodes is None:
-            raise RuntimeError(
-                'Seed node did not return a valid response.')
+            logger.error('Seed node did not return a valid response.')
+            return
         if len(nodes) == 0:
-            raise RuntimeError('Seed node did not return any nodes.')
+            logger.error('Seed node did not return any nodes.')
+            return
 
         async def ping_and_add_node(node):
             resp = await self._ping_node(node)

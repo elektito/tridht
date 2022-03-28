@@ -134,6 +134,12 @@ class RoutingTable:
         self._second_half = None
         self._nodes = set()
 
+    def size(self):
+        if self._is_split:
+            return self._first_half.size() + self._second_half.size()
+        else:
+            return len(self._nodes)
+
     def get_all_nodes(self):
         if self._is_split:
             yield from self._first_half.get_all_nodes()
