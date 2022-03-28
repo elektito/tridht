@@ -3,6 +3,7 @@ import random
 import time
 import os
 import trio
+from functools import partial
 from ipaddress import IPv4Address
 from copy import copy
 from trio import socket
@@ -97,6 +98,34 @@ class Dht:
         if self._routing_table.size() == 0:
             logger.critical('Could not seed routing table.')
             self._sock.close()
+            return
+
+        # now periodically perform find_node on existing nodes in
+        # order to fill up the routing table even more
+        while True:
+            await trio.sleep(10)
+
+            nodes = list(self._routing_table.get_all_nodes())
+            existing_node = random.choice(nodes)
+
+            random_node_id = get_random_node_id()
+            resp = await self._perform_find_node(existing_node, random_node_id)
+            if resp is None:
+                continue
+
+            if isinstance(resp, DhtErrorMessage):
+                continue
+
+            if not isinstance(resp, DhtResponseMessage):
+                continue
+
+            nodes = self._parse_find_node_response(resp)
+            if nodes is None:
+                continue
+
+            async with trio.open_nursery() as nursery:
+                for node in nodes:
+                    nursery.start_soon(self._ping_and_add_node, node)
 
     async def _seed_routing_table_from(self, seed_host, seed_port):
         logger.info('Seeding routing table...')
@@ -146,18 +175,10 @@ class Dht:
             logger.error('Seed node did not return any nodes.')
             return
 
-        async def ping_and_add_node(node):
-            resp = await self._ping_node(node)
-            if resp is None:
-                logger.info(
-                    'Node obtained from seed did not reply to ping.')
-                return
-            node.last_response_time = time.time()
-            node.ever_responded = True
-            self._routing_table.add_node(node)
         async with trio.open_nursery() as nursery:
             for node in nodes:
-                nursery.start_soon(ping_and_add_node, node)
+                nursery.start_soon(partial(
+                    self._ping_and_add_node, node, seeding=True))
 
         # seed node is now probably added to the routing table. remove
         # it.
@@ -529,6 +550,17 @@ class Dht:
                 logger.info(
                     f'First three self-IPs do not match. Trying again.')
                 self._self_ip_votes = {}
+
+    async def _ping_and_add_node(self, node, *, seeding=False):
+        resp = await self._ping_node(node)
+        if resp is None:
+            if seeding:
+                logger.info(
+                    'Node obtained from seed did not reply to ping.')
+            return
+        node.last_response_time = time.time()
+        node.ever_responded = True
+        self._routing_table.add_node(node)
 
     async def _send_and_get_response(self, msg, node):
         assert isinstance(msg, dict)
