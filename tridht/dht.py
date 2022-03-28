@@ -33,13 +33,16 @@ class DhtResponseMessage:
 
 
 class Dht:
-    def __init__(self, port, *, response_timeout=20, retries=2):
+    def __init__(self, port, *, seed_host, seed_port,
+                 response_timeout=20, retries=2):
         self.port = port
         self.node_id = get_random_node_id()
 
         self.response_timeout = response_timeout
         self.retries = retries
 
+        self._seed_host = seed_host
+        self._seed_port = seed_port
         self._nursery = None
         self._sock = None
         self._routing_table = RoutingTable(self)
@@ -84,17 +87,17 @@ class Dht:
     async def _seed_routing_table(self):
         logger.info('Seeding routing table...')
 
-        logger.info('Resolving seed domain name...')
+        logger.info('Resolving seed host name...')
         try:
-            addrs = await socket.getaddrinfo('router.bittorrent.com',
-                                             port=6881,
+            addrs = await socket.getaddrinfo(self._seed_host,
+                                             port=self._seed_port,
                                              family=socket.AF_INET,
                                              type=socket.SOCK_DGRAM)
         except socket.gaierror as e:
-            logger.fatal(f'Could not resolve seed domain name: {e}')
+            logger.fatal(f'Could not resolve seed host name: {e}')
             return
         if not addrs:
-            logger.fatal(f'No IP addresses found for the seed domain name.')
+            logger.fatal(f'No IP addresses found for the seed host name.')
             return
         _, _, _, _, seedaddr = random.choice(addrs)
 
