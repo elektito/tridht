@@ -266,7 +266,7 @@ class Dht:
                 logger.debug('Response channel already closed.')
         else:
             logger.info(
-                'Got an response packet not corresponding to any '
+                'Got a response packet not corresponding to any '
                 'query.')
 
         self._routing_table.add_or_update_node(
