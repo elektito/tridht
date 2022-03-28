@@ -24,10 +24,18 @@ class RoutingTable:
                 return self._second_half.add_node(node)
         else:
             if len(self._nodes) < K:
-                logger.info(
-                    f'Adding node to routing table: {node.id.hex()}')
+                prev_size = len(self._nodes)
                 self._nodes.add(node)
-                return True
+                if len(self._nodes) > prev_size:
+                    logger.info(
+                        f'Added node to routing table: {node.id.hex()}')
+                    return True
+                else:
+                    logger.debug(
+                        'Node %s was not added to the routing table '
+                        'because it was already there.',
+                        node.id.hex())
+                    return False
 
             if self.node_fits(self.dht.node_id):
                 if self.max_id - self.min_id <= K:
