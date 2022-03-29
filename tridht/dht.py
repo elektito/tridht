@@ -246,7 +246,7 @@ class Dht:
                 'Invalid error packet received: "e" is an empty list.')
             return
 
-        error_code == e[0]
+        error_code = e[0]
 
         if len(e) == 1:
             logger.info(
