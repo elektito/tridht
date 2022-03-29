@@ -65,13 +65,17 @@ async def main():
         'routing table. If no port is specified, 6881 is assumed. '
         'Defaults to %(default)s.')
 
+    parser.add_argument(
+        '--port', '-p', default=6881, type=int,
+        help='The port to bind to. Defaults to %(default)s.')
+
     args = parser.parse_args()
 
     config_logging(args.log_level)
 
     async with trio.open_nursery() as nursery:
         seed_host, seed_port = args.seed
-        dht = Dht(6881,
+        dht = Dht(args.port,
                   seed_host=seed_host,
                   seed_port=seed_port)
         nursery.start_soon(dht.run)
