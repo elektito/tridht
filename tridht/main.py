@@ -69,6 +69,15 @@ async def main():
         '--port', '-p', default=6881, type=int,
         help='The port to bind to. Defaults to %(default)s.')
 
+    parser.add_argument(
+        '--stats', action='store_true', default=False,
+        help='Periodically log some stats.')
+
+    parser.add_argument(
+        '--stats-period', type=int, default=60,
+        help='The period in which stats are logged when --stats is '
+        'set. Defaults to %(default)s seconds.')
+
     args = parser.parse_args()
 
     config_logging(args.log_level)
@@ -77,7 +86,9 @@ async def main():
         seed_host, seed_port = args.seed
         dht = Dht(args.port,
                   seed_host=seed_host,
-                  seed_port=seed_port)
+                  seed_port=seed_port,
+                  log_stats=args.stats,
+                  log_stats_period=args.stats_period)
         nursery.start_soon(dht.run)
     logger.info('Done.')
 

@@ -16,11 +16,16 @@ class PeerTable:
         self._update_times[ip, port] = time.time()
 
     def get_peers(self, info_hash):
-        peers = self._peers[info_hash]
+        peers = self._peers.get(info_hash)
+        if peers is None:
+            return []
         if len(peers) < K:
             return peers
         else:
             return random.sample(peers, K)
+
+    def size(self):
+        return len(self._peers)
 
     async def run(self):
         while True:
