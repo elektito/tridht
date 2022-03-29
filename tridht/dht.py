@@ -586,7 +586,13 @@ class Dht:
             send_channel.close()
             recv_channel.close()
 
-            del self._response_channels[tid]
+            try:
+                del self._response_channels[tid]
+            except KeyError:
+                # this shouldn't happen but we've seen it happen once,
+                # so until we figure out how it happened, this is
+                # gonna stay here.
+                logger.debug('tid not found in _response_channels.')
 
             retries -= 1
 
