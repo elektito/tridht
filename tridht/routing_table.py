@@ -6,7 +6,8 @@ from .node import Node
 K = 8
 logger = logging.getLogger(__name__)
 
-class RoutingTable:
+class BucketRoutingTable:
+    """A Routing Table implementation close to BEP 5 description."""
     def __init__(self, dht, min_id=0, max_id=2**160):
         self.dht = dht
         self.min_id = min_id
@@ -166,9 +167,9 @@ class RoutingTable:
 
     def _split(self):
         middle = self.min_id + (self.max_id - self.min_id) // 2
-        self._first_half = RoutingTable(
+        self._first_half = BucketRoutingTable(
             self.dht, self.min_id, middle)
-        self._second_half = RoutingTable(
+        self._second_half = BucketRoutingTable(
             self.dht, middle, self.max_id)
         for node in self._nodes:
             if self._first_half.node_fits(node):
@@ -186,3 +187,95 @@ class RoutingTable:
             return f'<RT SP 1={self._first_half} 2={self._second_half}>'
         else:
             return f'<RT NSP nodes={len(self._nodes)}>'
+
+
+class FullRoutingTable:
+    """A Routing Table implementation that keeps all nodes added to
+it. There are no buckets."""
+
+    def __init__(self, dht):
+        self.dht = dht
+        self._nodes = set()
+
+    def add_node(self, node):
+        prev_size = len(self._nodes)
+        self._nodes.add(node)
+        if len(self._nodes) > prev_size:
+            logger.info(
+                f'Added node to routing table: {node.id.hex()}')
+            return True
+        else:
+            logger.debug(
+                'Node %s was not added to the routing table '
+                'because it was already there.',
+                node.id.hex())
+            return False
+
+    def add_or_update_node(self, node_id, node_ip, node_port,
+                           interaction):
+        for node in self.get_all_nodes():
+            if node.id == node_id:
+                if interaction == 'query':
+                    node.last_query_time = time.time()
+                else:
+                    node.last_response_time = time.time()
+                    node.ever_responded = True
+                break
+        else:
+            node = Node(node_id, node_ip, node_port)
+            if interaction == 'query':
+                node.last_query_time = time.time()
+            else:
+                node.last_response_time = time.time()
+                node.ever_responded = True
+            self.add_node(node)
+
+    def find_node(self, node_id=None, node_ip=None, node_port=None):
+        for node in self._nodes:
+            if node_id and node.id == node_id:
+                return node
+            elif node.ip == node_ip and node.port == node_port:
+                return node
+
+    def get_close_nodes(self, node_id, compact=False):
+        distances = {}
+        node_id = int.from_bytes(node_id,
+                                 byteorder='big',
+                                 signed=False)
+        for node in self.get_all_nodes():
+            nid = int.from_bytes(node.id,
+                                 byteorder='big',
+                                 signed=False)
+            distance = bin(nid ^ node_id).count('1')
+            distances[node] = distance
+
+        distances = list(distances.items())
+        distances.sort(key=lambda r: r[1])
+        distances = distances[:K]
+
+        nodes = b'' if compact else []
+        for node, dist in distances:
+            if compact:
+                nodes += (
+                    node.id +
+                    IPv4Address(node.ip).packed +
+                    node.port.to_bytes(length=2,
+                                       byteorder='big',
+                                       signed=False)
+                )
+            else:
+                nodes.append(node)
+
+        return nodes
+
+    def remove(self, node):
+        self._nodes.remove(node)
+
+    def clear(self):
+        self._nodes = set()
+
+    def size(self):
+        return len(self._nodes)
+
+    def get_all_nodes(self):
+        return self._nodes

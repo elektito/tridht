@@ -9,7 +9,7 @@ from copy import copy
 from trio import socket
 from crc32c import crc32c
 from .bencode import bencode, bdecode, BDecodingError
-from .routing_table import RoutingTable
+from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
 from .node import Node
 
@@ -37,7 +37,9 @@ class Dht:
     def __init__(self, port, *, seed_host, seed_port,
                  response_timeout=20, retries=2,
                  log_stats=False,
-                 log_stats_period=10):
+                 log_stats_period=10,
+                 routing_table=None,
+                 peer_table=None):
         self.port = port
         self.node_id = get_random_node_id()
 
@@ -50,8 +52,6 @@ class Dht:
         self._log_stats_period = log_stats_period
         self._nursery = None
         self._sock = None
-        self._routing_table = RoutingTable(self)
-        self._peer_table = PeerTable()
         self._response_channels = {}
         self._next_tid = 0
         self._self_ip_votes = {}
@@ -59,6 +59,20 @@ class Dht:
 
         self._prev_token_secret = None
         self._cur_token_secret = None
+
+        if routing_table is not None:
+            logger.debug('Using passed routing table.')
+            self._routing_table = routing_table
+        else:
+            logger.debug('Creating new routing table.')
+            self._routing_table = BucketRoutingTable(self)
+
+        if peer_table is not None:
+            logger.debug('Using passed peer table.')
+            self._peer_table = peer_table
+        else:
+            logger.debug('Creating new peer table.')
+            self._peer_table = PeerTable()
 
     async def run(self):
         logger.info(f'Starting DHT on port {self.port}...')
