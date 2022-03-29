@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import random
 import time
 import os
@@ -469,6 +470,7 @@ class Dht:
                 b'y': b'r',
                 b'r': {
                     b'id': self.node_id,
+                    b'token': self._get_token(addr[0]),
                     b'peers': peers_list,
                 },
             }
@@ -480,6 +482,7 @@ class Dht:
             b'y': b'r',
             b'r': {
                 b'id': self.node_id,
+                b'token': self._get_token(addr[0]),
                 b'nodes': nodes,
             }
         }
@@ -682,7 +685,12 @@ class Dht:
         self._next_tid &= 0xffff
         return ret
 
-    def _is_token_valid(self, token, node):
+    def _is_token_valid(self, token, node_or_ip):
+        if isinstance(node_or_ip, Node):
+            ip = node_or_ip.ip
+        else:
+            ip = node_or_ip
+        ip = IPv4Address(node.ip).packed
         tok1 = hashlib.sha1(node.ip + self._cur_token_secret).digest()
         tok2 = hashlib.sha1(node.ip + self._prev_token_secret).digest()
         return token == tok1 or token == tok2
@@ -692,6 +700,7 @@ class Dht:
             ip = node_or_ip.ip
         else:
             ip = node_or_ip
+        ip = IPv4Address(ip).packed
         return hashlib.sha1(ip + self._cur_token_secret).digest()
 
     def _parse_find_node_response(self, resp):
