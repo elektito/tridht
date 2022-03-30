@@ -30,14 +30,13 @@ class BaseRoutingTable:
 
     def add_or_update_node(self, node_id, node_ip, node_port,
                            interaction):
-        for node in self.get_all_nodes():
-            if node.id == node_id:
-                if interaction == 'query':
-                    node.last_query_time = time.time()
-                else:
-                    node.last_response_time = time.time()
-                    node.ever_responded = True
-                break
+        node = self.find_node(node_id)
+        if node is not None:
+            if interaction == 'query':
+                node.last_query_time = time.time()
+            else:
+                node.last_response_time = time.time()
+                node.ever_responded = True
         else:
             node = Node(node_id, node_ip, node_port)
             if interaction == 'query':
@@ -102,7 +101,7 @@ class BucketRoutingTable(BaseRoutingTable):
         self.min_id = min_id
         self.max_id = max_id
 
-        self._nodes = set()
+        self._nodes = {}
         self._first_half = None
         self._second_half = None
 
@@ -118,7 +117,7 @@ class BucketRoutingTable(BaseRoutingTable):
         else:
             if len(self._nodes) < K:
                 prev_size = len(self._nodes)
-                self._nodes.add(node)
+                self._nodes[node.id] = node
                 if len(self._nodes) > prev_size:
                     logger.info(
                         f'Added node to routing table: {node.id.hex()}')
@@ -140,7 +139,7 @@ class BucketRoutingTable(BaseRoutingTable):
                 self._split()
                 return self.add_node(node)
             else:
-                if all(n.is_good() for n in self._nodes):
+                if all(n.is_good() for n in self._nodes.values()):
                     logger.info(
                         f'Not adding node {node.id.hex()} because all '
                         'existing nodes are good.')
@@ -152,7 +151,8 @@ class BucketRoutingTable(BaseRoutingTable):
                 logger.debug(
                     f'Gonna refresh bucket nodes later and see if we '
                     f'can add {node.id.hex()}')
-                self.dht.retry_add_node_after_refresh(node, self._nodes)
+                self.dht.retry_add_node_after_refresh(
+                    node, self._nodes.values())
 
     def find_node(self, node_id=None, node_ip=None, node_port=None):
         if self._is_split:
@@ -163,12 +163,13 @@ class BucketRoutingTable(BaseRoutingTable):
             return self._first_half.find_node(
                 node_id, node_ip, node_port)
         else:
-            for node in self._nodes:
-                if node_id and node.id == node_id:
-                    return node
-                elif node.ip == node_ip and node.port == node_port:
+            if node_id:
+                return self._nodes.get(node_id)
+            else:
+                for node in self._nodes:
+                    if node.ip == node_ip and node.port == node_port:
                         return node
-        return None
+                return None
 
     def remove(self, node):
         if self._is_split:
@@ -183,7 +184,7 @@ class BucketRoutingTable(BaseRoutingTable):
     def clear(self):
         self._first_half = None
         self._second_half = None
-        self._nodes = set()
+        self._nodes = {}
 
     def size(self):
         if self._is_split:
@@ -196,7 +197,7 @@ class BucketRoutingTable(BaseRoutingTable):
             yield from self._first_half.get_all_nodes()
             yield from self._second_half.get_all_nodes()
         else:
-            yield from iter(self._nodes)
+            yield from iter(self._nodes.values())
 
     def _node_fits(self, node):
         if isinstance(node, Node):
@@ -218,7 +219,7 @@ class BucketRoutingTable(BaseRoutingTable):
                 self._first_half.add_node(node)
             else:
                 self._second_half.add_node(node)
-        self._nodes = set()
+        self._nodes = {}
 
     @property
     def _is_split(self):
@@ -238,11 +239,11 @@ it. There are no buckets."""
     def __init__(self, dht=None):
         super().__init__(dht)
 
-        self._nodes = set()
+        self._nodes = {}
 
     def add_node(self, node):
         prev_size = len(self._nodes)
-        self._nodes.add(node)
+        self._nodes[node.id] = node
         if len(self._nodes) > prev_size:
             logger.debug(
                 f'Added node to routing table: {node.id.hex()}')
@@ -255,20 +256,25 @@ it. There are no buckets."""
             return False
 
     def find_node(self, node_id=None, node_ip=None, node_port=None):
-        for node in self._nodes:
-            if node_id and node.id == node_id:
-                return node
-            elif node.ip == node_ip and node.port == node_port:
-                return node
+        if node_id:
+            return self._nodes.get(node_id)
+        else:
+            for node in self._nodes.values():
+                if node.ip == node_ip and node.port == node_port:
+                    return node
+            return None
 
     def remove(self, node):
-        self._nodes.remove(node)
+        try:
+            del self._nodes[node.id]
+        except KeyError:
+            pass
 
     def clear(self):
-        self._nodes = set()
+        self._nodes = {}
 
     def size(self):
         return len(self._nodes)
 
     def get_all_nodes(self):
-        return self._nodes
+        return self._nodes.values()
