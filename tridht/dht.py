@@ -207,6 +207,10 @@ class Dht:
             'node.')
 
     async def _process_msg(self, data, addr):
+        if not data:
+            logger.info('Got empty packet.')
+            return
+
         try:
             msg, _ = bdecode(data)
         except BDecodingError as e:
