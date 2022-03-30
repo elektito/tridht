@@ -694,9 +694,9 @@ class Dht:
             ip = node_or_ip.ip
         else:
             ip = node_or_ip
-        ip = IPv4Address(node.ip).packed
-        tok1 = hashlib.sha1(node.ip + self._cur_token_secret).digest()
-        tok2 = hashlib.sha1(node.ip + self._prev_token_secret).digest()
+        ip = IPv4Address(ip).packed
+        tok1 = hashlib.sha1(ip + self._cur_token_secret).digest()
+        tok2 = hashlib.sha1(ip + self._prev_token_secret).digest()
         return token == tok1 or token == tok2
 
     def _get_token(self, node_or_ip):
