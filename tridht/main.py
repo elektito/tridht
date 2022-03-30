@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 from trio import socket
 from .bencode import bencode, bdecode, BDecodingError
 from .dht import Dht
+from .routing_table import FullRoutingTable
+from .peer_table import PeerTable
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,9 @@ async def main():
 
     parser.add_argument(
         '--port', '-p', default=6881, type=int,
-        help='The port to bind to. Defaults to %(default)s.')
+        help='The port to bind to. Defaults to %(default)s. If --count '
+        'is set to a number greater than 1, consecutive ports after '
+        'this will be used.')
 
     parser.add_argument(
         '--stats', action='store_true', default=False,
@@ -78,18 +82,37 @@ async def main():
         help='The period in which stats are logged when --stats is '
         'set. Defaults to %(default)s seconds.')
 
+    parser.add_argument(
+        '--count', '-n', type=int, default=1,
+        help='Number of DHT instances to run.')
+
     args = parser.parse_args()
 
     config_logging(args.log_level)
 
     async with trio.open_nursery() as nursery:
         seed_host, seed_port = args.seed
-        dht = Dht(args.port,
-                  seed_host=seed_host,
-                  seed_port=seed_port,
-                  log_stats=args.stats,
-                  log_stats_period=args.stats_period)
-        nursery.start_soon(dht.run)
+
+        routing_table = FullRoutingTable()
+        peer_table = PeerTable()
+        dhts = [
+            Dht(args.port + i,
+                seed_host=seed_host,
+                seed_port=seed_port,
+                log_stats=args.stats,
+                log_stats_period=args.stats_period,
+                routing_table=routing_table,
+                peer_table=peer_table,
+            )
+            for i in range(args.count)
+        ]
+        routing_table.dht = dhts[0]
+        nursery.start_soon(routing_table.run)
+        nursery.start_soon(peer_table.run)
+
+        for dht in dhts:
+            nursery.start_soon(dht.run)
+
     logger.info('Done.')
 
 

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class BucketRoutingTable:
     """A Routing Table implementation close to BEP 5 description."""
-    def __init__(self, dht, min_id=0, max_id=2**160):
+    def __init__(self, dht=None, min_id=0, max_id=2**160):
         self.dht = dht
         self.min_id = min_id
         self.max_id = max_id
@@ -16,6 +16,9 @@ class BucketRoutingTable:
         self._nodes = set()
         self._first_half = None
         self._second_half = None
+
+    async def run(self):
+        pass
 
     def add_node(self, node):
         if self._is_split:
