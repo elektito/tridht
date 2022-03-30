@@ -92,7 +92,7 @@ class Dht:
 
             while True:
                 try:
-                    data, addr = await self._sock.recvfrom(8192)
+                    data, addr = await self._sock.recvfrom(65535)
                 except trio.ClosedResourceError:
                     # another task has closed the socket, so an error
                     # has happened (probably while initializing)
