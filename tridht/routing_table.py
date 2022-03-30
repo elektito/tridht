@@ -193,15 +193,18 @@ class FullRoutingTable:
     """A Routing Table implementation that keeps all nodes added to
 it. There are no buckets."""
 
-    def __init__(self, dht):
+    def __init__(self, dht=None):
         self.dht = dht
         self._nodes = set()
+
+    async def run(self):
+        pass
 
     def add_node(self, node):
         prev_size = len(self._nodes)
         self._nodes.add(node)
         if len(self._nodes) > prev_size:
-            logger.info(
+            logger.debug(
                 f'Added node to routing table: {node.id.hex()}')
             return True
         else:

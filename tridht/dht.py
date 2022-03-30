@@ -233,7 +233,7 @@ class Dht:
 
         tid = msg.get(b't')
         if tid is None:
-            logger.info('No transaction id in received message.')
+            logger.debug('No transaction id in received message.')
             return
 
         msg_type = msg.get(b'y')
@@ -302,7 +302,7 @@ class Dht:
             except trio.ClosedResourceError:
                 logger.debug('Response channel already closed.')
         else:
-            logger.info(
+            logger.debug(
                 'Got an error packet not corresponding to any query.')
 
     async def _process_response(self, msg, tid, addr):
@@ -336,7 +336,7 @@ class Dht:
             except trio.ClosedResourceError:
                 logger.debug('Response channel already closed.')
         else:
-            logger.info(
+            logger.debug(
                 'Got a response packet not corresponding to any '
                 'query.')
 
