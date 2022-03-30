@@ -31,7 +31,7 @@ class PeerTable:
         while True:
             now = time.time()
             to_delete = []
-            for (ip, port), update_time in self._update_times:
+            for (ip, port), update_time in self._update_times.items():
                 if now - update_time > self._peer_timeout:
                     to_delete.append((ip, port))
             for ip, port in to_delete:
