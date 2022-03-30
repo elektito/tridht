@@ -53,6 +53,16 @@ def node(value):
     return host, port
 
 
+async def periodically_log_stats(stats_period, dhts, routing_table,
+                                 peer_table):
+    while True:
+        await trio.sleep(stats_period)
+        logger.info(
+            f'Stats: rt-size={routing_table.size()} '
+            f'pt-size={peer_table.size()}'
+        )
+
+
 async def signal_handler(nursery):
     signals_to_handle = [signal.SIGINT, signal.SIGTERM]
     with trio.open_signal_receiver(*signals_to_handle) as sig:
@@ -111,8 +121,6 @@ async def main():
             Dht(args.port + i,
                 seed_host=seed_host,
                 seed_port=seed_port,
-                log_stats=args.stats,
-                log_stats_period=args.stats_period,
                 routing_table=routing_table,
                 peer_table=peer_table,
             )
@@ -121,6 +129,12 @@ async def main():
         routing_table.dht = dhts[0]
         nursery.start_soon(routing_table.run)
         nursery.start_soon(peer_table.run)
+
+        if args.stats:
+            nursery.start_soon(
+                periodically_log_stats, args.stats_period, dhts,
+                routing_table, peer_table
+            )
 
         for dht in dhts:
             nursery.start_soon(dht.run)

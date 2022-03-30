@@ -37,8 +37,6 @@ class DhtResponseMessage:
 class Dht:
     def __init__(self, port, *, seed_host, seed_port,
                  response_timeout=20, retries=2,
-                 log_stats=False,
-                 log_stats_period=10,
                  routing_table=None,
                  peer_table=None):
         self.port = port
@@ -49,8 +47,6 @@ class Dht:
 
         self._seed_host = seed_host
         self._seed_port = seed_port
-        self._log_stats = log_stats
-        self._log_stats_period = log_stats_period
         self._nursery = None
         self._sock = None
         self._response_channels = {}
@@ -87,8 +83,6 @@ class Dht:
             nursery.start_soon(self._keep_token_secrets_updated)
             nursery.start_soon(self._seed_routing_table)
             nursery.start_soon(self._peer_table.run)
-            if self._log_stats:
-                nursery.start_soon(self._periodically_log_stats)
 
             while True:
                 try:
@@ -102,14 +96,6 @@ class Dht:
                 nursery.start_soon(self._process_msg, data, addr)
 
         logger.info(f'DHT on port {self.port} finished.')
-
-    async def _periodically_log_stats(self):
-        while True:
-            await trio.sleep(self._log_stats_period)
-            logger.info(
-                f'Stats: rt-size={self._routing_table.size()} '
-                f'pt-size={self._peer_table.size()}'
-            )
 
     async def _keep_token_secrets_updated(self):
         self._prev_token_secret = os.urandom(16)
