@@ -104,7 +104,7 @@ class Dht:
             await trio.sleep(5 * 60)
             self._prev_token_secret = self._cur_token_secret
             self._cur_token_secret = os.urandom(16)
-            logger.info('Updated token secret.')
+            logger.debug('Updated token secret.')
 
     async def _seed_routing_table(self):
         await self._seed_routing_table_from(
