@@ -53,10 +53,7 @@ class BaseRoutingTable:
                                  byteorder='big',
                                  signed=False)
         for node in self.get_all_nodes():
-            nid = int.from_bytes(node.id,
-                                 byteorder='big',
-                                 signed=False)
-            distance = bin(nid ^ node_id).count('1')
+            distance = bin(node.intid ^ node_id).count('1')
             distances[node] = distance
 
         distances = list(distances.items())

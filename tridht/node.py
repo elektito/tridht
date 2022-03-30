@@ -4,6 +4,7 @@ import time
 class Node:
     def __init__(self, node_id, ip, port):
         self.id = node_id
+        self.intid = int.from_bytes(self.id, byteorder='big')
         self.ip = ip
         self.port = port
 
@@ -23,8 +24,7 @@ class Node:
         )
 
     def __hash__(self):
-        node_id = int.from_bytes(self.id, byteorder='big')
-        return node_id % (2**64)
+        return self.intid % (2**64)
 
     def __eq__(self, other):
         return self.id == other.id
