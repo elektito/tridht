@@ -2,8 +2,10 @@ import argparse
 import logging
 import logging.config
 import random
+import signal
 import time
 import trio
+from functools import partial
 from urllib.parse import urlsplit
 from trio import socket
 from .bencode import bencode, bdecode, BDecodingError
@@ -51,6 +53,14 @@ def node(value):
     return host, port
 
 
+async def signal_handler(nursery):
+    signals_to_handle = [signal.SIGINT, signal.SIGTERM]
+    with trio.open_signal_receiver(*signals_to_handle) as sig:
+        async for signal_event in sig:
+            logger.info('Received signal. Quitting...')
+            nursery.cancel_scope.cancel()
+
+
 async def main():
     parser = argparse.ArgumentParser()
 
@@ -92,6 +102,8 @@ async def main():
 
     async with trio.open_nursery() as nursery:
         seed_host, seed_port = args.seed
+
+        nursery.start_soon(partial(signal_handler, nursery=nursery))
 
         routing_table = FullRoutingTable()
         peer_table = PeerTable()
