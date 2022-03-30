@@ -649,7 +649,11 @@ class Dht:
             msg[b'ip'] = ip + port
 
         msg = bencode(msg)
-        await self._sock.sendto(msg, addr)
+        try:
+            await self._sock.sendto(msg, addr)
+        except OSError as e:
+            logger.warning(
+                f'Error sending packet to {addr[0]}:{addr[1]}: {e}')
 
     async def _ping_node(self, node):
         msg = {
