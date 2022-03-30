@@ -15,9 +15,11 @@ def bdecode_string(data, allow_partial=True):
         raise BDecodingError('No colon found.')
 
     length = data[:colon_pos]
-    length = length.decode('ascii')
     try:
+        length = length.decode('ascii')
         length = int(length)
+    except UnicodeDecodeError:
+        raise BDecodingError('Invalid string length prefix.')
     except ValueError:
         raise BDecodingError('Invalid string length prefix.')
 
@@ -47,9 +49,11 @@ def bdecode_int(data, allow_partial=True):
         raise BDecodingError('Extra data at the end.')
 
     value = data[1:idx]
-    value = value.decode('ascii')
     try:
+        value = value.decode('ascii')
         value = int(value)
+    except UnicodeDecodeError:
+        raise BDecodingError('Invalid integer.')
     except ValueError:
         raise BDecodingError('Invalid integer.')
 
