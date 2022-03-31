@@ -167,15 +167,31 @@ class Dht:
     async def _index_infohashes(self):
         not_supporting = set()
         next_sample_time = {}
+
+        all_nodes = list(self._routing_table.get_all_nodes())
+        random.shuffle(all_nodes)
+
         while True:
-            node = random.choice(list(self._routing_table.get_all_nodes()))
+            if not all_nodes:
+                all_nodes = list(self._routing_table.get_all_nodes())
+                random.shuffle(all_nodes)
+                await trio.sleep(0.1)
+                continue
+
+            node = all_nodes.pop()
+
             now = trio.current_time()
-            if node in not_supporting or next_sample_time.get(node, now) < now:
+            if node in not_supporting or \
+               next_sample_time.get(node, now) < now:
                 await trio.sleep(0.1)
                 continue
 
             random_node_id = get_random_node_id()
             resp = await self._perform_sample_infohashes(node, random_node_id)
+            if isinstance(resp, DhtErrorMessage):
+                not_supporting.add(node)
+                await trio.sleep(0.1)
+                continue
             if not resp or not isinstance(resp, DhtResponseMessage):
                 await trio.sleep(0.1)
                 continue
