@@ -281,6 +281,7 @@ class Dht:
         # now perform a find_node query on a random node id to seed
         # the routing table
         random_node_id = get_random_node_id()
+        logger.info(f'Requesting random nodes from seed...')
         resp = await self._perform_find_node(seed_node, random_node_id)
         if resp is None:
             logger.error('Seed node did not respond to query.')
