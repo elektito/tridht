@@ -13,6 +13,7 @@ from .bencode import bencode, bdecode, BDecodingError
 from .dht import Dht
 from .routing_table import FullRoutingTable
 from .peer_table import PeerTable
+from .infohash_db import InfohashDb
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +47,12 @@ def log_level_value(value):
     return value.upper()
 
 
-async def write_state(filename, dhts, routing_table, peer_table):
+async def write_state(filename, dhts, routing_table, peer_table,
+                      infohash_db):
     state = {
         'rt': routing_table.serialize(),
         'pt': peer_table.serialize(),
+        'ihdb': infohash_db.serialize(),
         'dhts': [
             dht.serialize(serialize_routing_table=False,
                           serialize_peer_table=False)
@@ -61,17 +64,19 @@ async def write_state(filename, dhts, routing_table, peer_table):
         await f.write(state)
 
 
-async def load_state(args, RoutingTableClass, PeerTableClass):
+async def load_state(args, RoutingTableClass, PeerTableClass,
+                     InfohashDbClass):
     try:
         async with await trio.open_file(args.state_file, 'rb') as f:
             state = await f.read()
     except FileNotFoundError:
         logger.debug(f'State file {args.state_file} does not exist.')
-        return False, None, None, None
+        return False, None, None, None, None
 
     state = json.loads(state)
     rt = RoutingTableClass.deserialize(state['rt'])
     pt = PeerTableClass.deserialize(state['pt'])
+    ihdb = InfohashDbClass.deserialize(state.get('ihdb'))
     dhts = [
         Dht.deserialize(dht_state)
         for dht_state in state['dhts']
@@ -82,15 +87,16 @@ async def load_state(args, RoutingTableClass, PeerTableClass):
             f'Number of DHTs in saved state ({len(dhts)}) does not '
             f'match requested count ({args.count}). Ignoring saved '
             f'state.')
-        return False, None, None, None
+        return False, None, None, None, None
 
     ports = range(args.port, args.port + args.count)
     for dht, port in zip(dhts, ports):
         dht._routing_table = rt
         dht._peer_table = pt
+        dht._infohash_db = ihdb
         dht.port = port
 
-    return True, rt, pt, dhts
+    return True, rt, pt, ihdb, dhts
 
 
 def node(value):
@@ -112,11 +118,12 @@ async def periodically_log_stats(stats_period, dhts, routing_table,
 
 
 async def periodically_save_state(args, dhts, routing_table,
-                                  peer_table):
+                                  peer_table, infohash_db):
     while True:
         await trio.sleep(60)
         await write_state(
-            args.state_file, dhts, routing_table, peer_table)
+            args.state_file, dhts, routing_table, peer_table,
+            infohash_db)
 
 
 async def signal_handler(nursery):
@@ -167,6 +174,10 @@ async def main():
         help='Do not load state on startup.')
 
     parser.add_argument(
+        '--no-save-state', action='store_true', default=False,
+        help='Do not save state.')
+
+    parser.add_argument(
         '--state-file', default='tridht-state.json',
         help='The file to write the state to and read it from.')
 
@@ -176,6 +187,7 @@ async def main():
 
     RoutingTableClass = FullRoutingTable
     PeerTableClass = PeerTable
+    InfohashDbClass = InfohashDb
 
     async with trio.open_nursery() as nursery:
         seed_host, seed_port = args.seed
@@ -184,21 +196,23 @@ async def main():
 
         if not args.no_load_state:
             (
-                have_state, routing_table, peer_table, dhts
+                have_state, routing_table, peer_table, infohash_db, dhts
             ) = await load_state(
-                args, RoutingTableClass, PeerTableClass)
+                args, RoutingTableClass, PeerTableClass, InfohashDb)
         else:
             have_state = False
 
         if not have_state:
-            routing_table = FullRoutingTable()
-            peer_table = PeerTable()
+            routing_table = RoutingTableClass()
+            peer_table = PeerTableClass()
+            infohash_db = InfohashDbClass()
             dhts = [
                 Dht(args.port + i,
                     seed_host=seed_host,
                     seed_port=seed_port,
                     routing_table=routing_table,
                     peer_table=peer_table,
+                    infohash_db=infohash_db,
                 )
                 for i in range(args.count)
             ]
@@ -207,9 +221,11 @@ async def main():
 
         routing_table.dht = dhts[0]
 
-        nursery.start_soon(
-            periodically_save_state,
-            args, dhts, routing_table, peer_table)
+        if not args.no_save_state:
+            nursery.start_soon(
+                periodically_save_state,
+                args, dhts, routing_table, peer_table, infohash_db)
+
         nursery.start_soon(routing_table.run)
         nursery.start_soon(peer_table.run)
 
@@ -223,8 +239,10 @@ async def main():
             nursery.start_soon(dht.run)
 
     logger.info('Writing state...')
-    await write_state(
-        args.state_file, dhts, routing_table, peer_table)
+    if not args.no_save_state:
+        await write_state(
+            args.state_file, dhts, routing_table, peer_table,
+            infohash_db)
 
     logger.info('Done.')
 

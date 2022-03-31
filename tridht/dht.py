@@ -12,12 +12,14 @@ from crc32c import crc32c
 from .bencode import bencode, bdecode, BDecodingError
 from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
+from .infohash_db import InfohashDb
 from .node import Node
 
 logger = logging.getLogger(__name__)
 
 DefaultRoutingTable = BucketRoutingTable
 DefaultPeerTable = PeerTable
+DefaultInfohashDb = InfohashDb
 
 def get_random_node_id():
     node_id = random.randint(0, 2**160)
@@ -41,7 +43,8 @@ class Dht:
     def __init__(self, port, *, seed_host, seed_port,
                  response_timeout=20, retries=2,
                  routing_table=None,
-                 peer_table=None):
+                 peer_table=None,
+                 infohash_db=None):
         self.port = port
         self.node_id = get_random_node_id()
         self.started = False
@@ -75,6 +78,13 @@ class Dht:
             logger.debug('Creating new peer table.')
             self._peer_table = DefaultPeerTable()
 
+        if infohash_db is not None:
+            logger.debug('Using passed infohash db.')
+            self._infohash_db = infohash_db
+        else:
+            logger.debug('Creating new infohash db.')
+            self.infohash_db = DefaultInfohashDb()
+
     async def run(self):
         logger.info(f'Starting DHT on port {self.port}...')
 
@@ -90,6 +100,7 @@ class Dht:
             nursery.start_soon(self._seed_routing_table)
             nursery.start_soon(self._periodically_expand_routing_table)
             nursery.start_soon(self._peer_table.run)
+            nursery.start_soon(self._index_infohashes)
 
             while True:
                 try:
@@ -152,6 +163,45 @@ class Dht:
         dht._prev_token_secret = state['prev_token_secret']
         dht._cur_token_secret = state['cur_token_secret']
         return dht
+
+    async def _index_infohashes(self):
+        not_supporting = set()
+        next_sample_time = {}
+        while True:
+            node = random.choice(list(self._routing_table.get_all_nodes()))
+            now = trio.current_time()
+            if node in not_supporting or next_sample_time.get(node, now) < now:
+                await trio.sleep(0.1)
+                continue
+
+            random_node_id = get_random_node_id()
+            resp = await self._perform_sample_infohashes(node, random_node_id)
+            if not resp or not isinstance(resp, DhtResponseMessage):
+                await trio.sleep(0.1)
+                continue
+
+            num = resp.r.get(b'num')
+            interval = resp.r.get(b'interval')
+            nodes = resp.r.get(b'nodes')
+            samples = resp.r.get(b'samples')
+
+            if samples is None:
+                not_supporting.add(node)
+                await trio.sleep(0.1)
+                continue
+
+            if not interval or not isinstance(interval, int):
+                interval = 60
+
+            for i in range(0, len(samples), 20):
+                ih = samples[i:i+20]
+                self._infohash_db.add_infohash(ih)
+            if samples:
+                logger.info(
+                    f'Sampled {len(samples)//20} infohashes '
+                    f'(out of {num}).')
+
+            next_sample_time[node] = trio.current_time() + interval
 
     async def _keep_token_secrets_updated(self):
         self._prev_token_secret = os.urandom(16)
@@ -609,6 +659,7 @@ class Dht:
             port = addr[1]
 
         self._peer_table.announce(info_hash, addr[0], port)
+        self._infohash_db.add_infohash(info_hash)
 
         return {
             b't': tid,
@@ -742,6 +793,18 @@ class Dht:
         msg = {
             b'y': b'q',
             b'q': b'find_node',
+            b'a': {
+                b'id': self.node_id,
+                b'target': sought_node_id,
+            },
+        }
+        return await self._send_and_get_response(msg, dest_node)
+
+    async def _perform_sample_infohashes(self, dest_node,
+                                         sought_node_id):
+        msg = {
+            b'y': b'q',
+            b'q': b'sample_infohashes',
             b'a': {
                 b'id': self.node_id,
                 b'target': sought_node_id,
