@@ -13,20 +13,14 @@ class BaseRoutingTable:
         self.dht = dht
 
     async def run(self):
-        questionable_nodes = set()
         while True:
             for node in self.get_all_nodes():
-                if node.is_good():
-                    if node in questionable_nodes:
-                        questionable_nodes.remove(node)
+                if node.questionable:
+                    self.dht.check_node_goodness(node)
                     continue
-                if node in questionable_nodes:
+                if node.bad:
                     logger.info(f'Removing bad node: {node.id.hex()}')
                     self.remove(node)
-                    questionable_nodes.remove()
-                    continue
-                self.dht.check_node_goodness(node)
-                questionable_nodes.add(node)
 
             await trio.sleep(15 * 60)
 
@@ -138,18 +132,18 @@ class BucketRoutingTable(BaseRoutingTable):
                 self._split()
                 return self.add_node(node)
             else:
-                if all(n.is_good() for n in self._nodes.values()):
-                    logger.info(
-                        f'Not adding node {node.id.hex()} because all '
-                        'existing nodes are good.')
-                    return False
-
-                # ask the DHT to refresh the goodness state of the
-                # nodes in the current bucket, and then add this node
-                # if one has gone bad.
-                logger.debug(
-                    f'Gonna refresh bucket nodes later and see if we '
-                    f'can add {node.id.hex()}')
+                bad_node = None
+                for n in self._nodes.values():
+                    if n.is_bad():
+                        bad_node = n
+                        break
+                if bad_node is not None:
+                    logger.debug(
+                        f'Replacing bad node {bad_node.id.hex()} with '
+                        f'new node {node.id.hex()}.')
+                    del self._nodes[bad_node.id]
+                    self._nodes[node.id] = node
+                    return
                 self.dht.retry_add_node_after_refresh(
                     node, self._nodes.values())
 

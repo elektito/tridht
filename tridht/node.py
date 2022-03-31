@@ -7,12 +7,14 @@ class Node:
         self.intid = int.from_bytes(self.id, byteorder='big')
         self.ip = ip
         self.port = port
+        self.bad = False
 
         self.last_response_time = None
         self.last_query_time = None
         self.ever_responded = False
 
-    def is_good(self):
+    @property
+    def good(self):
         # should we use wall clock time here?
         return (
             (self.last_response_time is not None and
@@ -22,6 +24,10 @@ class Node:
              self.last_query_time is not None and
              self.last_query_time <= 15 * 60)
         )
+
+    @property
+    def questionable(self):
+        return not self.good and not self.bad
 
     def __hash__(self):
         return self.intid % (2**64)

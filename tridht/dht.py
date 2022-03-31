@@ -770,12 +770,13 @@ class Dht:
     async def _retry_add_node_after_refresh(self, node_to_add, nodes_to_refresh):
         for node in nodes_to_refresh:
             await self._check_node_goodness(node)
-        if not all(n.is_good() for n in nodes_to_refresh):
+        if not all(n.good for n in nodes_to_refresh):
             self._routing_table.add_node(node_to_add)
 
     async def _check_node_goodness(self, node):
         resp = await self._ping_node(node)
         if resp is None:
+            node.bad = True
             return
         now = time.time()
         node.last_query_time = node.last_response_time = now
