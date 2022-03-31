@@ -392,7 +392,12 @@ class Dht:
                 resp = await self._process_query_announce_peer(
                     msg, tid, addr, args, node_id)
             else:
-                logger.info(f'Unknown query received: {q}')
+                try:
+                    logger.info(
+                        f'Unknown query received: '
+                        f'{method.decode("ascii")}')
+                except UnicodeDecodeError:
+                    logger.info(f'Unknown query received: {method}')
                 resp = {
                     b't': tid,
                     b'y': b'e',
