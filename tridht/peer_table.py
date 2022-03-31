@@ -27,6 +27,25 @@ class PeerTable:
     def size(self):
         return len(self._peers)
 
+    def serialize(self):
+        return {
+            'peers': {
+                k.hex(): [ip, port]
+                for k, (ip, port) in self._peers
+            },
+            'update_times': self._update_times,
+        }
+
+    @classmethod
+    def deserialize(cls, state):
+        pt = cls()
+        pt._peers = defaultdict(list, {
+            bytes.fromhex(k): (ip, port)
+            for k, (ip, port) in state['peers']
+        })
+        pt._update_times = state['update_times']
+        return pt
+
     async def run(self):
         while True:
             now = time.time()

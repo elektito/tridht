@@ -13,6 +13,28 @@ class Node:
         self.last_query_time = None
         self.ever_responded = False
 
+    def serialize(self):
+        return {
+            'id': self.id.hex(),
+            'ip': self.ip,
+            'port': self.port,
+            'bad': self.bad,
+            'last_response_time': self.last_response_time,
+            'last_query_time': self.last_query_time,
+            'ever_responded': self.ever_responded,
+        }
+
+    @classmethod
+    def deserialize(cls, state):
+        node = cls(bytes.fromhex(state['id']),
+                   state['ip'],
+                   state['port'])
+        node.bad = state['bad']
+        node.last_response_time = state['last_response_time']
+        node.last_query_time = state['last_query_time']
+        node.ever_responded = state['ever_responded']
+        return node
+
     @property
     def good(self):
         # should we use wall clock time here?

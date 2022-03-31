@@ -16,6 +16,9 @@ from .node import Node
 
 logger = logging.getLogger(__name__)
 
+DefaultRoutingTable = BucketRoutingTable
+DefaultPeerTable = PeerTable
+
 def get_random_node_id():
     node_id = random.randint(0, 2**160)
     return node_id.to_bytes(20, byteorder='big', signed=False)
@@ -41,6 +44,7 @@ class Dht:
                  peer_table=None):
         self.port = port
         self.node_id = get_random_node_id()
+        self.started = False
 
         self.response_timeout = response_timeout
         self.retries = retries
@@ -62,14 +66,14 @@ class Dht:
             self._routing_table = routing_table
         else:
             logger.debug('Creating new routing table.')
-            self._routing_table = BucketRoutingTable(self)
+            self._routing_table = DefaultRoutingTable(self)
 
         if peer_table is not None:
             logger.debug('Using passed peer table.')
             self._peer_table = peer_table
         else:
             logger.debug('Creating new peer table.')
-            self._peer_table = PeerTable()
+            self._peer_table = DefaultPeerTable()
 
     async def run(self):
         logger.info(f'Starting DHT on port {self.port}...')
@@ -80,8 +84,11 @@ class Dht:
 
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
+            self.started = True
+
             nursery.start_soon(self._keep_token_secrets_updated)
             nursery.start_soon(self._seed_routing_table)
+            nursery.start_soon(self._periodically_expand_routing_table)
             nursery.start_soon(self._peer_table.run)
 
             while True:
@@ -97,6 +104,55 @@ class Dht:
 
         logger.info(f'DHT on port {self.port} finished.')
 
+    def serialize(self, serialize_routing_table=True,
+                        serialize_peer_table=True):
+        rt = None
+        if serialize_routing_table:
+            rt = self._routing_table.serialize()
+
+        pt = None
+        if serialize_peer_table:
+            pt = self._peer_table.seiralize()
+
+        return {
+            'rt': rt,
+            'pt': pt,
+            'port': self.port,
+            'node_id': self.node_id.hex(),
+            'response_timeout': self.response_timeout,
+            'retries': self.retries,
+            'seed_host': self._seed_host,
+            'seed_port': self._seed_port,
+            'next_tid': self._next_tid,
+            'prev_token_secret': self._prev_token_secret.hex(),
+            'cur_token_secret': self._cur_token_secret.hex(),
+        }
+
+    @classmethod
+    def deserialize(cls, state):
+        rt = None
+        if state['rt'] is not None:
+            rt = DefaultRoutingTable.deserialize(state['rt'])
+
+        pt = None
+        if state['pt'] is not None:
+            pt = DefaultPeerTable.deserialize(state['pt'])
+
+        dht = cls(
+            state['port'],
+            seed_host=state['seed_host'],
+            seed_port=state['seed_port'],
+            response_timeout=state['response_timeout'],
+            retries=state['retries'],
+            routing_table=rt,
+            peer_table=pt,
+        )
+        dht.node_id = bytes.fromhex(state['node_id'])
+        dht._next_tid = state['next_tid']
+        dht._prev_token_secret = state['prev_token_secret']
+        dht._cur_token_secret = state['cur_token_secret']
+        return dht
+
     async def _keep_token_secrets_updated(self):
         self._prev_token_secret = os.urandom(16)
         self._cur_token_secret = self._prev_token_secret
@@ -107,48 +163,40 @@ class Dht:
             logger.debug('Updated token secret.')
 
     async def _seed_routing_table(self):
-        await self._seed_routing_table_from(
-            self._seed_host, self._seed_port)
-
-        if self._routing_table.size() == 0:
-            logger.critical('Could not seed routing table.')
-            self._sock.close()
+        if self._routing_table.dht != self:
+            # routing table might be shared, but only one of the nodes
+            # is responsible for seeding and updating it.
             return
 
-        # now periodically perform find_node on existing nodes in
-        # order to fill up the routing table even more
-        while True:
-            await trio.sleep(10)
-
-            nodes = list(self._routing_table.get_all_nodes())
-            existing_node = random.choice(nodes)
-
-            random_node_id = get_random_node_id()
-            resp = await self._perform_find_node(existing_node, random_node_id)
-            if resp is None:
-                continue
-
-            if isinstance(resp, DhtErrorMessage):
-                continue
-
-            if not isinstance(resp, DhtResponseMessage):
-                continue
-
-            nodes = self._parse_find_node_response(resp)
-            if nodes is None:
-                continue
-
+        need_seeding = True
+        if self._routing_table.size() >= 5:
+            # possibly we don't need seeding; check the goodness of
+            # nodes in the routing table.
+            logger.debug('Checking goodness of existing nodes...')
+            good_ones = 0
+            all_nodes = list(self._routing_table.get_all_nodes())
             async with trio.open_nursery() as nursery:
-                for node in nodes:
-                    nursery.start_soon(self._ping_and_add_node, node)
+                for node in all_nodes:
+                    nursery.start_soon(self._check_node_goodness, node)
 
-    async def _seed_routing_table_from(self, seed_host, seed_port):
+            for node in all_nodes:
+                if node.good:
+                    good_ones += 1
+            if good_ones >= 8:
+                logger.info('Routing table already seeded.')
+                need_seeding = False
+            else:
+                logger.info('Not enough good nodes. Re-seeding...')
+
+        if not need_seeding:
+            return
+
         logger.info('Seeding routing table...')
 
         logger.info('Resolving seed host name...')
         try:
-            addrs = await socket.getaddrinfo(seed_host,
-                                             port=seed_port,
+            addrs = await socket.getaddrinfo(self._seed_host,
+                                             port=self._seed_port,
                                              family=socket.AF_INET,
                                              type=socket.SOCK_DGRAM)
         except socket.gaierror as e:
@@ -205,6 +253,32 @@ class Dht:
         logger.info(
             f'Added {len(nodes)} node(s) returned by the seed '
             'node.')
+
+    async def _periodically_expand_routing_table(self):
+        while True:
+            await trio.sleep(10)
+
+            nodes = list(self._routing_table.get_all_nodes())
+            existing_node = random.choice(nodes)
+
+            random_node_id = get_random_node_id()
+            resp = await self._perform_find_node(existing_node, random_node_id)
+            if resp is None:
+                continue
+
+            if isinstance(resp, DhtErrorMessage):
+                continue
+
+            if not isinstance(resp, DhtResponseMessage):
+                continue
+
+            nodes = self._parse_find_node_response(resp)
+            if nodes is None:
+                continue
+
+            async with trio.open_nursery() as nursery:
+                for node in nodes:
+                    nursery.start_soon(self._ping_and_add_node, node)
 
     async def _process_msg(self, data, addr):
         if not data:
@@ -563,6 +637,10 @@ class Dht:
                 self._ip = ips[0]
                 logger.info(f'Self-IP voted as: {self._ip}')
 
+                if self._validate_bep42_node_id(self.node_id, self._ip):
+                    logger.info('Node ID already BEP42-compliant.')
+                    return
+
                 self.node_id = self._generate_bep42_node_id(ip)
 
                 # clear routing table and add nodes again based on the
@@ -674,7 +752,7 @@ class Dht:
     def retry_add_node_after_refresh(self, node_to_add,
                                      nodes_to_refresh):
         self._nursery.start_soon(self._retry_add_node_after_refresh,
-                                node_to_add, copy(nodes_to_refresh))
+                                node_to_add, list(nodes_to_refresh))
 
     def check_node_goodness(self, node):
         self._nursery.start_soon(self._check_node_goodness, node)

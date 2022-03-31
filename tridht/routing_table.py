@@ -13,16 +13,36 @@ class BaseRoutingTable:
         self.dht = dht
 
     async def run(self):
+        while not self.dht or not self.dht.started:
+            await trio.sleep(1)
+
         while True:
+            to_remove = []
             for node in self.get_all_nodes():
                 if node.questionable:
                     self.dht.check_node_goodness(node)
                     continue
                 if node.bad:
                     logger.info(f'Removing bad node: {node.id.hex()}')
-                    self.remove(node)
+                    to_remove.append(node)
+
+            for node in to_remove:
+                self.remove(node)
 
             await trio.sleep(15 * 60)
+
+    def serialize(self):
+        return {
+            'nodes': [n.serialize() for n in self.get_all_nodes()],
+        }
+
+    @classmethod
+    def deserialize(cls, state):
+        rt = cls(None)
+        for node_state in state['nodes']:
+            node = Node.deserialize(node_state)
+            rt.add_node(node)
+        return rt
 
     def add_or_update_node(self, node_id, node_ip, node_port,
                            interaction):
@@ -33,6 +53,17 @@ class BaseRoutingTable:
             else:
                 node.last_response_time = time.time()
                 node.ever_responded = True
+
+            if node.ip != node_ip:
+                logger.info(
+                    f'Updating IP address of node {node_id.hex()} '
+                    f'from {node.ip} to {node_ip}')
+                node.ip = node_ip
+            if node.port != node_port:
+                logger.info(
+                    f'Updating port of node {node_id.hex()} from '
+                    f'{node.port} to {node_port}')
+                node.port = node_port
         else:
             node = Node(node_id, node_ip, node_port)
             if interaction == 'query':
@@ -134,7 +165,7 @@ class BucketRoutingTable(BaseRoutingTable):
             else:
                 bad_node = None
                 for n in self._nodes.values():
-                    if n.is_bad():
+                    if n.bad:
                         bad_node = n
                         break
                 if bad_node is not None:
@@ -207,7 +238,7 @@ class BucketRoutingTable(BaseRoutingTable):
             self.dht, self.min_id, middle)
         self._second_half = BucketRoutingTable(
             self.dht, middle, self.max_id)
-        for node in self._nodes:
+        for node in self._nodes.values():
             if self._first_half._node_fits(node):
                 self._first_half.add_node(node)
             else:
