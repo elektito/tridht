@@ -326,6 +326,9 @@ class Dht:
             await trio.sleep(10)
 
             nodes = list(self._routing_table.get_all_nodes())
+            if not nodes:
+                continue
+
             existing_node = random.choice(nodes)
 
             random_node_id = get_random_node_id()
