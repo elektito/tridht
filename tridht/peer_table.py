@@ -30,20 +30,26 @@ class PeerTable:
     def serialize(self):
         return {
             'peers': {
-                k.hex(): [ip, port]
-                for k, (ip, port) in self._peers
+                ih.hex(): [[ip, port] for ip, port in peers]
+                for ih, peers in self._peers.items()
             },
-            'update_times': self._update_times,
+            'update_times': {
+                f'{ip},{port}': value
+                for (ip, port), value in self._update_times.items()
+            }
         }
 
     @classmethod
     def deserialize(cls, state):
         pt = cls()
         pt._peers = defaultdict(list, {
-            bytes.fromhex(k): (ip, port)
-            for k, (ip, port) in state['peers']
+            bytes.fromhex(ih): [(ip, port) for ip, port in peers]
+            for ih, peers in state['peers'].items()
         })
-        pt._update_times = state['update_times']
+        pt._update_times = {
+            (k.split(',')[0], int(k.split(',')[1])): v
+            for k, v in state['update_times'].items()
+        }
         return pt
 
     async def run(self):
