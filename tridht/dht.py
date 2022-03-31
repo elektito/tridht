@@ -677,7 +677,7 @@ class Dht:
                                 node_to_add, copy(nodes_to_refresh))
 
     def check_node_goodness(self, node):
-        self._nursery.start_soon(_check_node_goodness, node)
+        self._nursery.start_soon(self._check_node_goodness, node)
 
     def _get_next_tid(self):
         ret = self._next_tid.to_bytes(length=2,
