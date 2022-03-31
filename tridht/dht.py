@@ -735,6 +735,7 @@ class Dht:
             if seeding:
                 logger.info(
                     'Node obtained from seed did not reply to ping.')
+                self._sock.close()
             return
         node.last_response_time = time.time()
         node.ever_responded = True
