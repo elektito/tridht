@@ -392,7 +392,7 @@ class Dht:
                 resp = await self._process_query_announce_peer(
                     msg, tid, addr, args, node_id)
             else:
-                logger.info(b'Unknown query received: {q}')
+                logger.info(f'Unknown query received: {q}')
                 resp = {
                     b't': tid,
                     b'y': b'e',
