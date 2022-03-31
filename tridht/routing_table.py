@@ -14,19 +14,21 @@ class BaseRoutingTable:
 
     async def run(self):
         questionable_nodes = set()
-        for node in self.get_all_nodes():
-            if node.is_good():
+        while True:
+            for node in self.get_all_nodes():
+                if node.is_good():
+                    if node in questionable_nodes:
+                        questionable_nodes.remove(node)
+                    continue
                 if node in questionable_nodes:
-                    questionable_nodes.remove(node)
-                continue
-            if node in questionable_nodes:
-                logger.info(f'Removing bad node: {node.id.hex()}')
-                self.remove(node)
-                questionable_nodes.remove()
-                continue
-            self.dht.check_node_goodness(node)
-            questionable_nodes.add(node)
-        await trio.sleep(15 * 60)
+                    logger.info(f'Removing bad node: {node.id.hex()}')
+                    self.remove(node)
+                    questionable_nodes.remove()
+                    continue
+                self.dht.check_node_goodness(node)
+                questionable_nodes.add(node)
+
+            await trio.sleep(15 * 60)
 
     def add_or_update_node(self, node_id, node_ip, node_port,
                            interaction):
@@ -104,9 +106,6 @@ class BucketRoutingTable(BaseRoutingTable):
         self._nodes = {}
         self._first_half = None
         self._second_half = None
-
-    async def run(self):
-        pass
 
     def add_node(self, node):
         if self._is_split:
