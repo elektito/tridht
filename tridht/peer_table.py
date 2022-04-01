@@ -24,6 +24,12 @@ class PeerTable:
         else:
             return random.sample(peers, K)
 
+    def get_sample(self, sample_size, compact=False):
+        sample = random.sample(list(self._peers), sample_size)
+        if compact:
+            sample = b''.join(sample)
+        return sample
+
     def size(self):
         return len(self._peers)
 

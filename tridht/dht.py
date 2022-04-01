@@ -44,7 +44,9 @@ class Dht:
                  response_timeout=20, retries=2,
                  routing_table=None,
                  peer_table=None,
-                 infohash_db=None):
+                 infohash_db=None,
+                 sample_infohash_interval=3600,
+                 infohash_sample_size=20):
         self.port = port
         self.node_id = get_random_node_id()
         self.started = False
@@ -83,7 +85,11 @@ class Dht:
             self._infohash_db = infohash_db
         else:
             logger.debug('Creating new infohash db.')
-            self.infohash_db = DefaultInfohashDb()
+            self._infohash_db = DefaultInfohashDb()
+
+        self._infohash_sample_size = infohash_sample_size
+        self._sample_infohash_interval = sample_infohash_interval
+        self._update_infohash_sample()
 
     async def run(self):
         logger.info(f'Starting DHT on port {self.port}...')
@@ -99,6 +105,7 @@ class Dht:
             nursery.start_soon(self._keep_token_secrets_updated)
             nursery.start_soon(self._seed_routing_table)
             nursery.start_soon(self._periodically_expand_routing_table)
+            nursery.start_soon(self._periodically_update_infohash_sample)
             nursery.start_soon(self._peer_table.run)
             nursery.start_soon(self._index_infohashes)
 
@@ -321,6 +328,20 @@ class Dht:
             f'Added {len(nodes)} node(s) returned by the seed '
             'node.')
 
+    async def _periodically_update_infohash_sample(self):
+        while True:
+            self._update_infohash_sample()
+            logger.debug('Infohash sample updated.')
+            await trio.sleep(self._sample_infohash_interval)
+
+    def _update_infohash_sample(self):
+        sample_size = self._infohash_sample_size
+        if sample_size > self._peer_table.size():
+            sample_size = self._peer_table.size()
+
+        self._cur_infohash_sample = self._peer_table.get_sample(
+            sample_size, compact=True)
+
     async def _periodically_expand_routing_table(self):
         while True:
             await trio.sleep(10)
@@ -535,6 +556,9 @@ class Dht:
             elif method == b'announce_peer':
                 resp = await self._process_query_announce_peer(
                     msg, tid, addr, args, node_id)
+            elif method == b'sample_infohashes':
+                resp = await self._process_query_sample_infohashes(
+                    msg, tid, addr, args, node_id)
             else:
                 try:
                     logger.info(
@@ -592,6 +616,8 @@ class Dht:
         logger.info(
             f'Got a get_peers query from {node_id.hex()} for info_hash '
             f'{info_hash.hex()}')
+
+        self._infohash_db.add_infohash(info_hash)
 
         peers = self._peer_table.get_peers(info_hash)
         if peers:
@@ -685,6 +711,32 @@ class Dht:
             b't': tid,
             b'y': b'r',
             b'r': {b'id': self.node_id},
+        }
+
+    async def _process_query_sample_infohashes(self, msg, tid, addr,
+                                               args, node_id):
+        target = args.get(b'target')
+        if target:
+            nodes = self._routing_table.get_close_nodes(
+                target, compact=True)
+        else:
+            logger.debug('sample_infohashes query has no target.')
+            nodes = b''
+
+        logger.info(
+            f'Got an sample_infohashes query from {node_id.hex()} with '
+            f'target {target.hex()}')
+
+        return {
+            b't': tid,
+            b'y': b'r',
+            b'r': {
+                b'id': self.node_id,
+                b'nodes': nodes,
+                b'interval': self._sample_infohash_interval,
+                b'num': self._peer_table.size(),
+                b'samples': self._cur_infohash_sample,
+            }
         }
 
     def _process_self_ip(self, msg, voter_addr):
