@@ -8,11 +8,11 @@ K = 8
 class PeerTable:
     def __init__(self):
         self._peer_timeout = 24 * 3600
-        self._peers = defaultdict(list)
+        self._peers = defaultdict(set)
         self._update_times = {}
 
     def announce(self, info_hash, ip, port):
-        self._peers[info_hash].append((ip, port))
+        self._peers[info_hash].add((ip, port))
         self._update_times[ip, port] = time.time()
 
     def get_peers(self, info_hash):
@@ -48,8 +48,8 @@ class PeerTable:
     @classmethod
     def deserialize(cls, state):
         pt = cls()
-        pt._peers = defaultdict(list, {
-            bytes.fromhex(ih): [(ip, port) for ip, port in peers]
+        pt._peers = defaultdict(set, {
+            bytes.fromhex(ih): {(ip, port) for ip, port in peers}
             for ih, peers in state['peers'].items()
         })
         pt._update_times = {
