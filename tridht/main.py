@@ -14,33 +14,9 @@ from .dht import Dht
 from .routing_table import FullRoutingTable
 from .peer_table import PeerTable
 from .infohash_db import InfohashDb
+from .utils import config_logging
 
 logger = logging.getLogger(__name__)
-
-def config_logging(log_level):
-    logging.config.dictConfig({
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'standard': {
-                'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-            }
-        },
-        'handlers': {
-            'default': {
-                'level': log_level,
-                'class': 'logging.StreamHandler',
-                'formatter': 'standard',
-            }
-        },
-        'loggers': {
-            '': {
-                'handlers': ['default'],
-                'level': log_level,
-                'propagate': True,
-            },
-        }
-    })
 
 
 def log_level_value(value):
