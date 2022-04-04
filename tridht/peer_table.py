@@ -68,6 +68,9 @@ class PeerTable:
             for ip, port in to_delete:
                 del self._update_times[ip, port]
                 for ih in self._peers:
-                    self._peers[ih].remove((ip, port))
+                    try:
+                        self._peers[ih].remove((ip, port))
+                    except KeyError:
+                        pass
 
             await trio.sleep(60)
