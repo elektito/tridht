@@ -112,6 +112,7 @@ class Bittorrent:
         self._peer_ut_metadata_id = None
 
         self._received_ext_handshake = False
+        self._peer_supports_fast = False
 
         self._stream = None
         self._log = logging.getLogger(__name__)
@@ -155,7 +156,8 @@ class Bittorrent:
             await self._recv_bt_handshake()
 
             await self._send_ext_handshake()
-            await self._send_have_none()
+            if self._peer_supports_fast:
+                await self._send_have_none()
             await self._send_choke()
             await self._send_not_interesetd()
 
@@ -301,7 +303,8 @@ class Bittorrent:
             raise _InternalBtError(
                 BtErr.PEER_DOESNT_SUPPORT_EXT_PROTOCOL)
         if reserved & 0x0000_0000_0000_0004 == 0:
-            raise _InternalBtError(BtErr.PEER_DOESNT_SUPPORT_FAST_EXT)
+            self._peer_supports_fast = False
+            logger.debug('Peer does not support fast protocol.')
 
     async def _send_bt_msg(self, msg_type, payload):
         length = len(payload) + 1
