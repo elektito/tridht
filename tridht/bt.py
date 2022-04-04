@@ -311,7 +311,12 @@ class Bittorrent:
         data = length.to_bytes(length=4, byteorder='big')
         data += bytes([msg_type])
         data += payload
-        await self._stream.send_all(data)
+        try:
+            await self._stream.send_all(data)
+        except trio.BrokenResourceError as e:
+            raise _InternalBtError(
+                BtErr.CONN_RESET_BY_PEER,
+                'Connection reset by peer while writing.')
 
     async def _send_choke(self):
         await self._send_bt_msg(0x00, b'')
