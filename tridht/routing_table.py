@@ -47,30 +47,31 @@ class BaseRoutingTable:
     def add_or_update_node(self, node_id, node_ip, node_port,
                            interaction):
         node = self.find_node(node_id)
-        if node is not None:
-            if interaction == 'query':
-                node.last_query_time = time.time()
-            else:
-                node.last_response_time = time.time()
-                node.ever_responded = True
 
-            if node.ip != node_ip:
-                logger.info(
-                    f'Updating IP address of node {node_id.hex()} '
-                    f'from {node.ip} to {node_ip}')
-                node.ip = node_ip
-            if node.port != node_port:
-                logger.info(
-                    f'Updating port of node {node_id.hex()} from '
-                    f'{node.port} to {node_port}')
-                node.port = node_port
-        else:
+        should_add_node = False
+        if node is None:
             node = Node(node_id, node_ip, node_port)
-            if interaction == 'query':
-                node.last_query_time = time.time()
-            else:
-                node.last_response_time = time.time()
-                node.ever_responded = True
+            should_add_node = True
+
+        if interaction == 'query':
+            node.last_query_time = time.time()
+        elif interaction == 'response_to_query':
+            node.last_response_time = time.time()
+            node.ever_responded = True
+            node.bad = False
+
+        if node.ip != node_ip:
+            logger.info(
+                f'Updating IP address of node {node_id.hex()} '
+                f'from {node.ip} to {node_ip}')
+            node.ip = node_ip
+        if node.port != node_port:
+            logger.info(
+                f'Updating port of node {node_id.hex()} from '
+                f'{node.port} to {node_port}')
+            node.port = node_port
+
+        if should_add_node:
             self.add_node(node)
 
     def get_close_nodes(self, node_id, compact=False):

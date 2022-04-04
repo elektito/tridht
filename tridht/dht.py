@@ -490,13 +490,18 @@ class Dht:
                 await resp_channel.send(resp_msg)
             except trio.ClosedResourceError:
                 logger.debug('Response channel already closed.')
+
+            self._routing_table.add_or_update_node(
+                node_id, addr[0], addr[1],
+                interaction='response_to_query')
         else:
             logger.debug(
                 'Got a response packet not corresponding to any '
                 'query.')
 
-        self._routing_table.add_or_update_node(
-            node_id, addr[0], addr[1], interaction='response')
+            self._routing_table.add_or_update_node(
+                node_id, addr[0], addr[1],
+                interaction='response_unsolicited')
 
     async def _process_query(self, msg, tid, addr):
         logger.debug(f'Got query packet: {msg}')
@@ -826,6 +831,9 @@ class Dht:
                 logger.debug('tid not found in _response_channels.')
 
             retries -= 1
+
+        if resp is None:
+            node.bad = True
 
         return resp
 
