@@ -51,6 +51,12 @@ class Dht:
         self.node_id = get_random_node_id()
         self.started = False
 
+        self.get_peers_in_flight = 0
+        self.get_peers_no_response = 0
+        self.get_peers_errors = 0
+        self.get_peers_with_nodes = 0
+        self.get_peers_with_values = 0
+
         self.response_timeout = response_timeout
         self.retries = retries
 
@@ -90,6 +96,77 @@ class Dht:
         self._infohash_sample_size = infohash_sample_size
         self._sample_infohash_interval = sample_infohash_interval
         self._update_infohash_sample()
+
+    async def fetch_peers(self, infohash, return_channel):
+        already_tried_for_nodes = set()
+        already_returned_peers = set()
+        no_response_nodes = set()
+        async def find_nodes_or_peers(node, nursery):
+            if not self._validate_bep42_node_id(node.id, node.ip):
+                #print('notgood')
+                return
+            #print('fnop', node, node.ip, node.port, self._validate_bep42_node_id(node.id, node.ip))
+            msg = {
+                b't': self._get_next_tid(),
+                b'y': b'q',
+                b'q': b'get_peers',
+                b'a': {
+                    b'id': self.node_id,
+                    b'info_hash': infohash,
+                },
+            }
+
+            self.get_peers_in_flight += 1
+            try:
+                resp = await self._send_and_get_response(msg, node)
+            finally:
+                self.get_peers_in_flight -= 1
+
+            if resp is None:
+                self.get_peers_no_response += 1
+                no_response_nodes.add(node)
+                return
+            if not isinstance(resp, DhtResponseMessage):
+                self.get_peers_errors += 1
+                return
+            if b'values' in resp.r:
+                for value in resp.r[b'values']:
+                    if len(value) != 6:
+                        logger.warning(
+                            'peer info length not divisible by 6.')
+                        return
+                    print('values', len(resp.r[b'values']))
+                    self.get_peers_with_values += 1
+                    ip = str(IPv4Address(value[:4]))
+                    port = int.from_bytes(value[4:], byteorder='big')
+                    if (ip, port) not in already_returned_peers:
+                        await return_channel.send((ip, port))
+                        already_returned_peers.add((ip, port))
+            elif b'nodes' in resp.r:
+                nodes = resp.r[b'nodes']
+                if len(nodes) % 26 != 0:
+                    logger.warning(
+                        'nodes field length not divisible by 26.')
+                    return
+                self.get_peers_with_nodes += 1
+                nodes = self._parse_find_node_response(resp)
+                for node in nodes:
+                    if node not in already_tried_for_nodes and \
+                       node not in no_response_nodes:
+                        nursery.start_soon(
+                            find_nodes_or_peers, node, nursery)
+                        already_tried_for_nodes.add(node)
+            else:
+                logger.debug(
+                    f'Neither values nor nodes in get_peers response. {resp.r}')
+
+        nodes = self._routing_table.get_close_nodes(infohash)
+        async with trio.open_nursery() as nursery:
+            for node in nodes:
+                nursery.start_soon(find_nodes_or_peers, node, nursery)
+
+        return_channel.close()
+        print('finished fetch_peers')
 
     async def run(self):
         logger.info(f'Starting DHT on port {self.port}...')
