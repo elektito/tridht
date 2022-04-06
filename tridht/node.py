@@ -13,6 +13,8 @@ class Node:
         self.last_query_time = None
         self.ever_responded = False
 
+        self._precomputed_hash = self.intid % (2**64)
+
     def serialize(self):
         return {
             'id': self.id.hex(),
@@ -52,7 +54,7 @@ class Node:
         return not self.good and not self.bad
 
     def __hash__(self):
-        return self.intid % (2**64)
+        return self._precomputed_hash
 
     def __eq__(self, other):
         return self.id == other.id
