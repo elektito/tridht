@@ -273,7 +273,12 @@ class Bittorrent:
         handshake = (
             bt_header + bt_reserved + self.infohash + self.id
         )
-        await self._stream.send_all(handshake)
+        try:
+            await self._stream.send_all(handshake)
+        except trio.BrokenResourceError as e:
+            raise _InternalBtError(
+                BtErr.CONN_RESET_BY_PEER,
+                'Connection reset by peer while sending handshake.')
 
     async def _recv_bt_handshake(self):
         logger.debug('Receiving bittorrent handshake...')
