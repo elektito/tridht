@@ -86,11 +86,12 @@ class BittorrentLoggerAdapter(logging.LoggerAdapter):
 
 class Bittorrent:
     def __init__(self, peer_ip, peer_port, infohash, *,
-                 peer_id=None, timeout=30):
+                 peer_id=None, timeout=30, save_failure_logs=False):
         self.peer_ip = peer_ip
         self.peer_port = peer_port
         self.infohash = infohash
         self.timeout = timeout
+        self.save_failure_logs = save_failure_logs
 
         if peer_id:
             self.id = self_peer_id
@@ -132,7 +133,8 @@ class Bittorrent:
             else:
                 self.status = BtStatus.SUCCESS
             finally:
-                if self.status == BtStatus.ERROR:
+                if self.status == BtStatus.ERROR and \
+                   self.save_failure_logs:
                     filename = (
                         f'{self.infohash.hex()}-{self.peer_ip}-'
                         f'{self.peer_port}.log'
