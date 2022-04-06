@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from trio import socket
 from .bencode import bencode, bdecode, BDecodingError
 from .dht import Dht
-from .routing_table import FullRoutingTable
+from .routing_table import FullBucketRoutingTable
 from .peer_table import PeerTable
 from .infohash_db import InfohashDb
 from .fetcher import MetadataFetcher
@@ -168,7 +168,7 @@ async def main():
 
     config_logging(args.log_level)
 
-    RoutingTableClass = FullRoutingTable
+    RoutingTableClass = FullBucketRoutingTable
     PeerTableClass = PeerTable
     InfohashDbClass = InfohashDb
 

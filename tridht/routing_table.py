@@ -3,6 +3,7 @@ import logging
 import trio
 from ipaddress import IPv4Address
 from .node import Node
+from .utils import hamming_distance, node_distance_to
 
 K = 8
 logger = logging.getLogger(__name__)
@@ -27,8 +28,8 @@ class BaseRoutingTable:
                     logger.info(f'Removing bad node: {node.id.hex()}')
                     to_remove.append(node)
 
-            for node in to_remove:
-                self.remove(node)
+            self.remove_nodes(to_remove)
+            logger.debug('Finished looking for bad nodes.')
 
             await trio.sleep(15 * 60)
 
@@ -81,7 +82,7 @@ class BaseRoutingTable:
                                  byteorder='big',
                                  signed=False)
         for node in self.get_all_nodes():
-            distance = bin(node.intid ^ node_id).count('1')
+            distance = hamming_distance(node.intid, node_id)
             distances[node] = distance
 
         distances = list(distances.items())
@@ -112,6 +113,9 @@ class BaseRoutingTable:
     def remove(self, node):
         raise NotImplementedError
 
+    def remove_nodes(self, nodes):
+        raise NotImplementedError
+
     def clear(self):
         raise NotImplementedError
 
@@ -124,7 +128,8 @@ class BaseRoutingTable:
 
 class BucketRoutingTable(BaseRoutingTable):
     """A Routing Table implementation close to BEP 5 description."""
-    def __init__(self, dht=None, min_id=0, max_id=2**160):
+    def __init__(self, dht=None, min_id=0, max_id=2**160, *,
+                 full=False, parent=None):
         super().__init__(dht)
 
         self.min_id = min_id
@@ -133,6 +138,8 @@ class BucketRoutingTable(BaseRoutingTable):
         self._nodes = {}
         self._first_half = None
         self._second_half = None
+        self._full = full
+        self._parent = parent
 
     def add_node(self, node):
         if self._is_split:
@@ -155,8 +162,8 @@ class BucketRoutingTable(BaseRoutingTable):
                         node.id.hex())
                     return False
 
-            if self._node_fits(self.dht.node_id):
-                if self.max_id - self.min_id <= K:
+            if self._full or self._node_fits(self.dht.node_id):
+                if not self._full and self.max_id - self.min_id <= K:
                     logger.info(
                         f'Not adding node {node.id.hex()} because '
                         'bucket cannot be split any further.')
@@ -203,9 +210,43 @@ class BucketRoutingTable(BaseRoutingTable):
             self._second_half.remove(node)
         else:
             try:
-                self._nodes.remove(node)
+                del self._nodes[node]
             except KeyError:
                 pass
+
+    def remove_nodes(self, nodes):
+        if len(nodes) == 0:
+            return
+
+        size = self.size()
+        if size > 1000 and len(nodes) / size > 0.1:
+            # re-constructing the routing table might actually be a
+            # lot faster than going through all buckets and removing
+            # nodes
+            all_nodes = list(self.get_all_nodes())
+            for node in nodes:
+                all_nodes.remove(node)
+            self.clear()
+            for node in all_nodes:
+                self.add_node(node)
+            return
+
+        if self._is_split:
+            self._first_half.remove_nodes(nodes)
+            self._second_half.remove_nodes(nodes)
+        else:
+            for node in nodes:
+                try:
+                    del self._nodes[node.id]
+                except KeyError:
+                    pass
+
+    def _get_leaf_buckets(self):
+        if self._is_split:
+            yield from self._first_half._get_leaf_buckets()
+            yield from self._second_half._get_leaf_buckets()
+        else:
+            yield self
 
     def clear(self):
         self._first_half = None
@@ -225,6 +266,73 @@ class BucketRoutingTable(BaseRoutingTable):
         else:
             yield from iter(self._nodes.values())
 
+    def get_close_nodes(self, node_id, compact=False):
+        if self._is_split:
+            if self._first_half._node_fits(node_id):
+                nodes = self._first_half.get_close_nodes(node_id)
+            else:
+                nodes = self._second_half.get_close_nodes(node_id)
+        else:
+            nodes = list(self._nodes.values())
+
+        if len(nodes) < K:
+            prev_bucket = self._get_prev_bucket()
+            if prev_bucket:
+                nodes += prev_bucket.get_all_nodes()
+
+            next_bucket = self._get_next_bucket()
+            if next_bucket:
+                nodes += next_bucket.get_all_nodes()
+
+        if len(nodes) > K:
+            int_nid = int.from_bytes(node_id, byteorder='big')
+            nodes.sort(key=node_distance_to(int_nid))
+            return nodes[:K]
+
+        if compact:
+            nodes = b''.join(
+                node.id +
+                IPv4Address(node.ip).packed +
+                node.port.to_bytes(length=2,
+                                   byteorder='big',
+                                   signed=False)
+                for node in nodes
+            )
+
+        return nodes
+
+    def _get_prev_bucket(self):
+        parent = self._parent
+        child = self
+        while True:
+            if not parent:
+                return None
+            if child == parent._second_half:
+                return parent._first_half._get_last_leaf_bucket()
+            child, parent = parent, parent._parent
+
+    def _get_next_bucket(self):
+        parent = self._parent
+        child = self
+        while True:
+            if not parent:
+                return None
+            if child == parent._first_half:
+                return parent._second_half._get_first_leaf_bucket()
+            child, parent = parent, parent._parent
+
+    def _get_first_leaf_bucket(self):
+        if not self._is_split:
+            return self
+
+        return self._first_half._get_first_leaf_bucket()
+
+    def _get_last_leaf_bucket(self):
+        if not self._is_split:
+            return self
+
+        return self._second_half._get_last_leaf_bucket()
+
     def _node_fits(self, node):
         if isinstance(node, Node):
             node_id = node.id
@@ -236,10 +344,10 @@ class BucketRoutingTable(BaseRoutingTable):
 
     def _split(self):
         middle = self.min_id + (self.max_id - self.min_id) // 2
-        self._first_half = BucketRoutingTable(
-            self.dht, self.min_id, middle)
-        self._second_half = BucketRoutingTable(
-            self.dht, middle, self.max_id)
+        self._first_half = type(self)(
+            self.dht, self.min_id, middle, parent=self)
+        self._second_half = type(self)(
+            self.dht, middle, self.max_id, parent=self)
         for node in self._nodes.values():
             if self._first_half._node_fits(node):
                 self._first_half.add_node(node)
@@ -256,6 +364,11 @@ class BucketRoutingTable(BaseRoutingTable):
             return f'<RT SP 1={self._first_half} 2={self._second_half}>'
         else:
             return f'<RT NSP nodes={len(self._nodes)}>'
+
+
+class FullBucketRoutingTable(BucketRoutingTable):
+    def __init__(self, dht=None, min_id=0, max_id=2**160, parent=None):
+        super().__init__(dht, min_id, max_id, full=True, parent=parent)
 
 
 class FullRoutingTable(BaseRoutingTable):
@@ -295,6 +408,13 @@ it. There are no buckets."""
             del self._nodes[node.id]
         except KeyError:
             pass
+
+    def remove_nodes(self, nodes):
+        for node in nodes:
+            try:
+                del self._nodes[node.id]
+            except KeyError:
+                pass
 
     def clear(self):
         self._nodes = {}
