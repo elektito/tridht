@@ -17,6 +17,7 @@ class BaseRoutingTable:
             await trio.sleep(1)
 
         while True:
+            logger.debug('Looking for bad nodes...')
             to_remove = []
             for node in self.get_all_nodes():
                 if node.questionable:

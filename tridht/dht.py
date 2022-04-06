@@ -135,7 +135,6 @@ class Dht:
                         logger.warning(
                             'peer info length not divisible by 6.')
                         return
-                    print('values', len(resp.r[b'values']))
                     self.get_peers_with_values += 1
                     ip = str(IPv4Address(value[:4]))
                     port = int.from_bytes(value[4:], byteorder='big')
@@ -166,7 +165,7 @@ class Dht:
                 nursery.start_soon(find_nodes_or_peers, node, nursery)
 
         return_channel.close()
-        print('finished fetch_peers')
+        logger.debug(f'Finished fetch_peers for: {infohash.hex()}')
 
     async def run(self):
         logger.info(f'Starting DHT on port {self.port}...')
