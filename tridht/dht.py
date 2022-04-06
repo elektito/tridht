@@ -243,8 +243,8 @@ class Dht:
         )
         dht.node_id = bytes.fromhex(state['node_id'])
         dht._next_tid = state['next_tid']
-        dht._prev_token_secret = state['prev_token_secret']
-        dht._cur_token_secret = state['cur_token_secret']
+        dht._prev_token_secret = bytes.fromhex(state['prev_token_secret'])
+        dht._cur_token_secret = bytes.fromhex(state['cur_token_secret'])
         return dht
 
     async def _index_infohashes(self):
