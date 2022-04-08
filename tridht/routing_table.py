@@ -12,10 +12,11 @@ logger = logging.getLogger(__name__)
 class BaseRoutingTable:
     def __init__(self, dht):
         self.dht = dht
+        self.ready = trio.Event()
 
     async def run(self):
-        while not self.dht or not self.dht.started:
-            await trio.sleep(1)
+        await self.dht.started.wait()
+        self.ready.set()
 
         while True:
             logger.debug('Looking for bad nodes...')
