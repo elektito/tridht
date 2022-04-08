@@ -22,8 +22,6 @@ class _Cmd(Enum):
 
 class InfohashDb:
     def __init__(self, database=None):
-        self.infohashes = set()
-        self.metadata = {}
         self.ready = trio.Event()
 
         if database is None:
@@ -210,26 +208,11 @@ class InfohashDb:
         results = random.sample(results, 10)
 
     def serialize(self):
-        return {
-            'infohashes': [
-                ih.hex() for ih in self.infohashes
-            ],
-            'metadata': {
-                ih.hex(): metadata.hex()
-                for ih, metadata in self.metadata.items()
-            },
-        }
+        return {}
 
     @classmethod
     def deserialize(cls, state):
         db = cls()
         if state:
-            db.infohashes = {
-                bytes.fromhex(ih)
-                for ih in state['infohashes']
-            }
-            db.metadata = {
-                bytes.fromhex(ih): bytes.fromhex(metadata)
-                for ih, metadata in state.get('metadata', {}).items()
-            }
+            pass
         return db
