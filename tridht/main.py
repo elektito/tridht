@@ -211,6 +211,7 @@ async def main():
 
         nursery.start_soon(routing_table.run)
         nursery.start_soon(peer_table.run)
+        nursery.start_soon(infohash_db.run, peer_table)
 
         fetcher = MetadataFetcher(infohash_db, dhts)
         nursery.start_soon(fetcher.run)
