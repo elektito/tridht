@@ -7,6 +7,8 @@ K = 8
 
 class PeerTable:
     def __init__(self):
+        self.ready = trio.Event()
+
         self._peer_timeout = 24 * 3600
         self._peers = defaultdict(set)
         self._update_times = {}
@@ -59,6 +61,7 @@ class PeerTable:
         return pt
 
     async def run(self):
+        self.ready.set()
         while True:
             now = time.time()
             to_delete = []
