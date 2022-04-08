@@ -859,7 +859,8 @@ class Dht:
             port = addr[1]
 
         self._peer_table.announce(info_hash, addr[0], port)
-        await self._infohash_db.add_infohash_for_announce(info_hash)
+        await self._infohash_db.add_infohash_for_announce(
+            info_hash, addr[0], port)
 
         return {
             b't': tid,
