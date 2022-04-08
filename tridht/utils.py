@@ -21,13 +21,13 @@ def config_logging(log_level):
         'loggers': {
             'tridht.dht': {
                 'handlers': ['default'],
-                'level': 'WARNING',
-                'propagate': True,
+                'level': log_level,
+                'propagate': False,
             },
             'tridht.routing_table': {
                 'handlers': ['default'],
-                'level': 'WARNING',
-                'propagate': True,
+                'level': log_level,
+                'propagate': False,
             },
             '': {
                 'handlers': ['default'],
