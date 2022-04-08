@@ -209,7 +209,7 @@ async def main():
 
         nursery.start_soon(routing_table.run)
         nursery.start_soon(peer_table.run)
-        nursery.start_soon(infohash_db.run, peer_table)
+        nursery.start_soon(infohash_db.run)
 
         if args.stats:
             nursery.start_soon(
