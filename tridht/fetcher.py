@@ -141,11 +141,15 @@ async def main():
         help='The period in which stats are logged when --stats is '
         'set. Defaults to %(default)s seconds.')
 
+    parser.add_argument(
+        '--database', '-d', default='postgresql+asyncpg:///tridht',
+        help='The postgres database to use. Defaults to "%(defaults)s".')
+
     args = parser.parse_args()
 
     config_logging(args.log_level)
 
-    infohash_db = InfohashDb()
+    infohash_db = InfohashDb(args.database)
     seed_host, seed_port = args.seed
     dht = Dht(
         args.port,

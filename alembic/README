@@ -1,0 +1,43 @@
+# Migrations README
+
+## Creating and deleting database
+
+Assuming your user has enough permissions to create a database, and
+you have postresql client tools installed, simply run:
+
+    $ createdb tridht
+
+This will create an empty database named tracking. In order to delete
+the database (all data will be lost) run:
+
+    $ dropdb tridht
+
+## Checking configuration
+
+The `alembic.ini` file provided in the root directory is provided as
+an example. You can change the `sqlalchemy.url` value in this file to
+determine what database is to be used by alembic.
+
+NOTE: `alembic.ini` is added to the `.gitignore` file so that you
+won't add database credentials to version control by mistake.
+
+## Make sure you are at the latest version
+
+This will upgrade the database to the latest version available:
+
+    $ alembic upgrade head
+
+## Creating new migrations
+
+If you have made modifications to the database layout, run this to
+auto-generate the migration script:
+
+    $ alembic revision --autogenerate -m "An exaplanation of the changes made"
+
+This will create a new file in the `migrations/versions` directory,
+which needs to be added to version control. You also need to look at
+the new file and make sure everything is in order. There are changes
+that the auto-generate script will not find out and you need to add
+manually. See [here][1] for more information.
+
+[1]: https://alembic.sqlalchemy.org/en/latest/autogenerate.html#what-does-autogenerate-detect-and-what-does-it-not-detect
