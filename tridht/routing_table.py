@@ -164,7 +164,11 @@ class BucketRoutingTable(BaseRoutingTable):
                     return False
 
             if self._full or self._node_fits(self.dht.node_id):
-                if not self._full and self.max_id - self.min_id <= K:
+                if len(self._nodes) < K:
+                    self._nodes[node.id] = node
+                    return True
+
+                if self.max_id - self.min_id <= K:
                     logger.info(
                         f'Not adding node {node.id.hex()} because '
                         'bucket cannot be split any further.')
@@ -200,7 +204,7 @@ class BucketRoutingTable(BaseRoutingTable):
             if node_id:
                 return self._nodes.get(node_id)
             else:
-                for node in self._nodes:
+                for node in self._nodes.values():
                     if node.ip == node_ip and node.port == node_port:
                         return node
                 return None
