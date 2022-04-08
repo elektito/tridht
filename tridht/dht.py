@@ -46,10 +46,18 @@ class Dht:
                  peer_table=None,
                  infohash_db=None,
                  sample_infohash_interval=3600,
-                 infohash_sample_size=20):
+                 infohash_sample_size=20,
+                 no_index=False,
+                 no_expand=False,
+                 readonly=False):
         self.port = port
+        self.no_index = no_index
+        self.no_expand = no_expand
+        self.readonly = readonly
         self.node_id = get_random_node_id()
-        self.started = False
+
+        self.started = trio.Event()
+        self.ready = trio.Event()
 
         self.get_peers_in_flight = 0
         self.get_peers_no_response = 0
@@ -75,23 +83,29 @@ class Dht:
         if routing_table is not None:
             logger.debug('Using passed routing table.')
             self._routing_table = routing_table
+            self._own_routing_table = False
         else:
             logger.debug('Creating new routing table.')
             self._routing_table = DefaultRoutingTable(self)
+            self._own_routing_table = True
 
         if peer_table is not None:
             logger.debug('Using passed peer table.')
             self._peer_table = peer_table
+            self._own_peer_table = False
         else:
             logger.debug('Creating new peer table.')
             self._peer_table = DefaultPeerTable()
+            self._own_peer_table = True
 
         if infohash_db is not None:
             logger.debug('Using passed infohash db.')
             self._infohash_db = infohash_db
+            self._own_ihdb = False
         else:
             logger.debug('Creating new infohash db.')
             self._infohash_db = DefaultInfohashDb()
+            self._own_ihdb = True
 
         self._infohash_sample_size = infohash_sample_size
         self._sample_infohash_interval = sample_infohash_interval
@@ -176,19 +190,37 @@ class Dht:
 
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
-            self.started = True
+            self.started.set()
 
-            nursery.start_soon(self._keep_token_secrets_updated)
             nursery.start_soon(self._seed_routing_table)
-            nursery.start_soon(self._periodically_expand_routing_table)
-            nursery.start_soon(self._periodically_update_infohash_sample)
-            nursery.start_soon(self._peer_table.run)
-            nursery.start_soon(self._index_infohashes)
+
+            if not self.readonly:
+                nursery.start_soon(self._periodically_update_infohash_sample)
+                nursery.start_soon(self._keep_token_secrets_updated)
+
+            if self._own_routing_table:
+                nursery.start_soon(self._routing_table.run)
+
+            if self._own_peer_table:
+                nursery.start_soon(self._peer_table.run)
+
+            if self._own_ihdb:
+                nursery.start_soon(self._infohash_db.run)
+
+            if not self.no_expand:
+                nursery.start_soon(self._periodically_expand_routing_table)
+
+            if not self.no_index:
+                nursery.start_soon(self._index_infohashes)
+
+            await self._routing_table.ready.wait()
+            await self._peer_table.ready.wait()
+            await self._infohash_db.ready.wait()
 
             while True:
                 try:
                     data, addr = await self._sock.recvfrom(65535)
-                except trio.ClosedResourceError:
+                except (trio.ClosedResourceError, OSError):
                     # another task has closed the socket, so an error
                     # has happened (probably while initializing)
                     nursery.cancel_scope.cancel()
@@ -294,7 +326,7 @@ class Dht:
 
             for i in range(0, len(samples), 20):
                 ih = samples[i:i+20]
-                self._infohash_db.add_infohash(ih)
+                await self._infohash_db.add_infohash_for_sample(ih)
             if samples:
                 logger.info(
                     f'Sampled {len(samples)//20} infohashes '
@@ -368,24 +400,29 @@ class Dht:
         resp = await self._perform_find_node(seed_node, random_node_id)
         if resp is None:
             logger.error('Seed node did not respond to query.')
+            self._sock.close()
             return
 
         if isinstance(resp, DhtErrorMessage):
             logger.error(
                 f'Seed node returned an error to query: {resp}')
+            self._sock.close()
             return
 
         if not isinstance(resp, DhtResponseMessage):
             logger.error(
                 'Seed node returned invalid response to query.')
+            self._sock.close()
             return
 
         nodes = self._parse_find_node_response(resp)
         if nodes is None:
             logger.error('Seed node did not return a valid response.')
+            self._sock.close()
             return
         if len(nodes) == 0:
             logger.error('Seed node did not return any nodes.')
+            self._sock.close()
             return
 
         async with trio.open_nursery() as nursery:
@@ -403,8 +440,11 @@ class Dht:
         logger.info(
             f'Added {len(nodes)} node(s) returned by the seed '
             'node.')
+        self.ready.set()
 
     async def _periodically_update_infohash_sample(self):
+        # this updates the sample we return every time we receive a
+        # BEP-51 style sample_infohashes command.
         while True:
             self._update_infohash_sample()
             logger.debug('Infohash sample updated.')
@@ -477,7 +517,11 @@ class Dht:
             logger.debug('Client version not set in received message.')
 
         if msg_type == b'q':
-            await self._process_query(msg, tid, addr)
+            if self.readonly:
+                logger.debug(
+                    'Ignoring query because in read-only mode.')
+            else:
+                await self._process_query(msg, tid, addr)
         elif msg_type == b'r':
             await self._process_response(msg, tid, addr)
         elif msg_type == b'e':
@@ -698,7 +742,7 @@ class Dht:
             f'Got a get_peers query from {node_id.hex()} for info_hash '
             f'{info_hash.hex()}')
 
-        self._infohash_db.add_infohash(info_hash)
+        await self._infohash_db.add_infohash_for_get_peers(info_hash)
 
         peers = self._peer_table.get_peers(info_hash)
         if peers:
@@ -786,7 +830,7 @@ class Dht:
             port = addr[1]
 
         self._peer_table.announce(info_hash, addr[0], port)
-        self._infohash_db.add_infohash(info_hash)
+        await self._infohash_db.add_infohash_for_announce(info_hash)
 
         return {
             b't': tid,
@@ -868,7 +912,6 @@ class Dht:
             if seeding:
                 logger.info(
                     'Node obtained from seed did not reply to ping.')
-                self._sock.close()
             return
         node.last_response_time = time.time()
         node.ever_responded = True
@@ -920,6 +963,9 @@ class Dht:
             addr = node
 
         msg[b'v'] = b'TD\x00\x01'
+
+        if self.readonly:
+            msg[b'ro'] = 1
 
         if msg[b'y'] in [b'r', b'e']:
             ip, port = addr
