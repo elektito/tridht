@@ -67,9 +67,9 @@ async def load_state(args, RoutingTableClass, PeerTableClass,
 
     ports = range(args.port, args.port + args.count)
     for dht, port in zip(dhts, ports):
-        dht._routing_table = rt
-        dht._peer_table = pt
-        dht._infohash_db = ihdb
+        dht.routing_table = rt
+        dht.peer_table = pt
+        dht.infohash_db = ihdb
         dht.port = port
 
     return True, rt, pt, ihdb, dhts

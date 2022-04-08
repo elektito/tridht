@@ -111,6 +111,36 @@ class Dht:
         self._sample_infohash_interval = sample_infohash_interval
         self._update_infohash_sample()
 
+    @property
+    def routing_table(self):
+        return self._routing_table
+
+    @routing_table.setter
+    def routing_table(self, value):
+        assert not self.started.is_set()
+        self._own_routing_table = False
+        self._routing_table = value
+
+    @property
+    def peer_table(self):
+        return self._peer_table
+
+    @peer_table.setter
+    def peer_table(self, value):
+        assert not self.started.is_set()
+        self._own_peer_table = False
+        self._peer_table = value
+
+    @property
+    def infohash_db(self):
+        return self._infohash_db
+
+    @infohash_db.setter
+    def infohash_db(self, value):
+        assert not self.started.is_set()
+        self._own_ihdb = False
+        self._infohash_db = value
+
     async def fetch_peers(self, infohash, return_channel):
         already_tried_for_nodes = set()
         already_returned_peers = set()
