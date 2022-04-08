@@ -153,7 +153,7 @@ class BucketRoutingTable(BaseRoutingTable):
                 prev_size = len(self._nodes)
                 self._nodes[node.id] = node
                 if len(self._nodes) > prev_size:
-                    logger.info(
+                    logger.debug(
                         f'Added node to routing table: {node.id.hex()}')
                     return True
                 else:
