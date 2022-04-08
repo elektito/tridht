@@ -14,7 +14,6 @@ from .dht import Dht
 from .routing_table import FullBucketRoutingTable
 from .peer_table import PeerTable
 from .infohash_db import InfohashDb
-from .fetcher import MetadataFetcher
 from .utils import config_logging
 
 logger = logging.getLogger(__name__)
@@ -85,7 +84,7 @@ def node(value):
 
 
 async def periodically_log_stats(stats_period, dhts, routing_table,
-                                 peer_table, fetcher):
+                                 peer_table):
     while True:
         await trio.sleep(stats_period)
         logger.info(
@@ -96,7 +95,6 @@ async def periodically_log_stats(stats_period, dhts, routing_table,
             f'gp_error={dhts[0].get_peers_errors} '
             f'gp_w_values={dhts[0].get_peers_with_values} '
             f'gp_w_nodes={dhts[0].get_peers_with_nodes} '
-            f'fetches={fetcher.fetches_in_flight}'
         )
 
 
@@ -213,13 +211,10 @@ async def main():
         nursery.start_soon(peer_table.run)
         nursery.start_soon(infohash_db.run, peer_table)
 
-        fetcher = MetadataFetcher(infohash_db, dhts)
-        nursery.start_soon(fetcher.run)
-
         if args.stats:
             nursery.start_soon(
                 periodically_log_stats, args.stats_period, dhts,
-                routing_table, peer_table, fetcher
+                routing_table, peer_table,
             )
 
         for dht in dhts:

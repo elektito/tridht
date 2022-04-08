@@ -117,9 +117,8 @@ class Dht:
         no_response_nodes = set()
         async def find_nodes_or_peers(node, nursery):
             if not self._validate_bep42_node_id(node.id, node.ip):
-                #print('notgood')
                 return
-            #print('fnop', node, node.ip, node.port, self._validate_bep42_node_id(node.id, node.ip))
+
             msg = {
                 b't': self._get_next_tid(),
                 b'y': b'q',

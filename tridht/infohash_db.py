@@ -153,10 +153,6 @@ class InfohashDb:
         return await self._run_cmd(_Cmd.ADD_IH_SAMPLE, ih)
         self._pending.append((_Cmd.ADD_IH_SAMPLE, ih))
 
-    def size(self):
-        raise RuntimeError
-        return len(self.infohashes)
-
     async def store_metadata(self, ih, metadata):
         return await self._run_cmd(_Cmd.STORE_METADATA, ih, metadata)
         self._pending.append((_Cmd.STORE_METADATA, ih, metadata))
