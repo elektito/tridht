@@ -38,7 +38,6 @@ class MetadataFetcher:
                         peers = [(peer_ip, peer_port)]
                     else:
                         peers = []
-                    prev = self._fetchers_semaphore.value
                     await self._fetchers_semaphore.acquire()
                     nursery.start_soon(
                         self._fetch_metadata_and_release,
