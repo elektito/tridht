@@ -8,13 +8,13 @@ class BDecodingError(Exception):
         return self._msg
 
 
-def bdecode_string(data, allow_partial=True):
+def bdecode_string(data, start, allow_partial=True):
     try:
-        colon_pos = data.index(b':')
+        colon_pos = data.index(b':', start)
     except ValueError:
         raise BDecodingError('No colon found.')
 
-    length = data[:colon_pos]
+    length = data[start:colon_pos]
     try:
         length = length.decode('ascii')
         length = int(length)
@@ -24,31 +24,31 @@ def bdecode_string(data, allow_partial=True):
         raise BDecodingError('Invalid string length prefix.')
 
     value = data[colon_pos+1:]
-    if len(value) < length:
+    if colon_pos + length >= len(data):
         raise BDecodingError('String is truncated.')
 
-    value = value[:length]
-    bytes_consumed = colon_pos + 1 + length
-    if not allow_partial and bytes_consumed < len(data):
+    value = data[colon_pos+1:colon_pos+1+length]
+    bytes_consumed = colon_pos + 1 + length - start
+    if not allow_partial and bytes_consumed < len(data) - start:
         raise BDecodingError('Extra data at the end.')
 
     return value, bytes_consumed
 
 
-def bdecode_int(data, allow_partial=True):
+def bdecode_int(data, start=0, allow_partial=True):
     idx = 1 # bypass the first 'i' character
     value = bytearray()
-    while idx < len(data):
-        if data[idx] == ord(b'e'):
+    while idx < len(data) - start:
+        if data[start + idx] == ord(b'e'):
             break
         idx += 1
     else:
         raise BDecodingError('Integer is truncated.')
 
-    if not allow_partial and idx < len(data) - 1:
+    if not allow_partial and idx < len(data) - start - 1:
         raise BDecodingError('Extra data at the end.')
 
-    value = data[1:idx]
+    value = data[start+1:start+idx]
     try:
         value = value.decode('ascii')
         value = int(value)
@@ -61,64 +61,64 @@ def bdecode_int(data, allow_partial=True):
     return value, bytes_consumed
 
 
-def bdecode_list(data, allow_partial=True):
+def bdecode_list(data, start=0, allow_partial=True):
     idx = 1 # bypass the initial 'l'
     value = []
-    while idx < len(data):
-        if data[idx] == ord(b'e'):
+    while idx < len(data) - start:
+        if data[start + idx] == ord(b'e'):
             break
-        element, econsumed = bdecode(data[idx:], allow_partial=True)
+        element, econsumed = bdecode(data, start + idx, allow_partial=True)
         value.append(element)
         idx += econsumed
     else:
         raise BDecodingError('List is truncated.')
 
-    if not allow_partial and idx < len(data) - 1:
+    if not allow_partial and idx < len(data) - start - 1:
         raise BDecodingError('Extra data at the end.')
 
     return value, idx + 1
 
 
-def bdecode_dict(data, allow_partial=True):
+def bdecode_dict(data, start=0, allow_partial=True):
     idx = 1 # bypass the initial 'd'
     ret = {}
-    while idx < len(data):
-        if data[idx] == ord(b'e'):
+    while idx < len(data) - start:
+        if data[start + idx] == ord(b'e'):
             break
-        key, consumed = bdecode(data[idx:], allow_partial=True)
+        key, consumed = bdecode(data, start + idx, allow_partial=True)
         if not isinstance(key, bytes):
             raise BDecodingError('Dictionary keys must be strings.')
         idx += consumed
-        value, consumed = bdecode(data[idx:], allow_partial=True)
+        value, consumed = bdecode(data, start + idx, allow_partial=True)
         ret[key] = value
         idx += consumed
     else:
         raise BDecodingError('Dictionary is truncated.')
 
-    if not allow_partial and idx < len(data) - 1:
+    if not allow_partial and idx < len(data) - start - 1:
         raise BDecodingError('Extra data at the end.')
 
     return ret, idx + 1
 
 
-def bdecode(data: bytes, allow_partial=False):
+def bdecode(data: bytes, start=0, allow_partial=False):
     if not isinstance(data, bytes):
         raise TypeError('Data to bdecode should be a bytes value.')
 
     if data == b'':
         raise ValueError('Cannot decode an empty value.')
 
-    if data[0] in b'0123456789':
-        return bdecode_string(data, allow_partial=allow_partial)
+    if data[start] in b'0123456789':
+        return bdecode_string(data, start, allow_partial=allow_partial)
     else:
         func = {
             ord(b'i'): bdecode_int,
             ord(b'l'): bdecode_list,
             ord(b'd'): bdecode_dict,
-        }.get(data[0])
+        }.get(data[start])
         if not func:
             raise BDecodingError('Unknown type specifier.')
-        value, nconsumed = func(data, allow_partial=allow_partial)
+        value, nconsumed = func(data, start, allow_partial=allow_partial)
         return value, nconsumed
 
 
