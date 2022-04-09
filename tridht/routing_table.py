@@ -231,7 +231,10 @@ class BucketRoutingTable(BaseRoutingTable):
             # nodes
             all_nodes = list(self.get_all_nodes())
             for node in nodes:
-                all_nodes.remove(node)
+                try:
+                    all_nodes.remove(node)
+                except ValueError:
+                    logger.debug('Trying to remove non-existing node.')
             self.clear()
             for node in all_nodes:
                 self.add_node(node)
