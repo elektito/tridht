@@ -151,11 +151,12 @@ def bencode(value):
         dict: bencode_dict,
     }
 
-    for t, func in funcs.items():
-        if isinstance(value, t):
-            return func(value)
-    else:
+    func = funcs.get(type(value))
+    if func is None:
         types_str = ', '.join(t.__name__ for t in funcs)
         raise TypeError(
             f'Data to bencode should be one of: {types_str} '
             f'(got {type(value).__name__})')
+
+    return func(value)
+
