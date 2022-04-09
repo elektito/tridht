@@ -93,6 +93,9 @@ class Bittorrent:
         self.timeout = timeout
         self.save_failure_logs = save_failure_logs
 
+        if isinstance(self.peer_ip, IPv4Address):
+            self.peer_ip = str(self.peer_ip)
+
         if peer_id:
             self.id = self_peer_id
         else:
