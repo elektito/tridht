@@ -126,7 +126,10 @@ class Infohash(Base):
                     'Could not add non-existing infohash to database.')
                 return
         nfailures, = result[0]
-        delay = timedelta(hours=2**(nfailures + 1))
+        delay_hours = 2**(nfailures + 1)
+        if delay_hours > 100000:
+            delay_hours = 100000
+        delay = timedelta(hours=delay_hours)
 
         stmt = (
             update(Infohash)

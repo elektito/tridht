@@ -87,14 +87,12 @@ async def periodically_log_stats(stats_period, dhts, routing_table,
                                  peer_table):
     while True:
         await trio.sleep(stats_period)
+        dht_stats = ' '.join(
+            f'{k}={v}'for k, v in dhts[0].stats.items())
         logger.info(
             f'Stats: rt-size={routing_table.size()} '
-            f'pt-size={peer_table.size()} '
-            f'get_peers={dhts[0].get_peers_in_flight} '
-            f'gp_no_resp={dhts[0].get_peers_no_response} '
-            f'gp_error={dhts[0].get_peers_errors} '
-            f'gp_w_values={dhts[0].get_peers_with_values} '
-            f'gp_w_nodes={dhts[0].get_peers_with_nodes} '
+            f'pt-size={peer_table.size()} ' +
+            dht_stats
         )
 
 

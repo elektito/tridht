@@ -8,7 +8,7 @@ from .utils import config_logging
 from .infohash_db import InfohashDb
 from .dht import Dht
 
-MAX_FETCHERS = 300
+MAX_FETCHERS = 200
 MAX_CONNS_PER_FETCHER = 15
 MAX_TOTAL_CONNS = 950
 
@@ -20,8 +20,11 @@ class MetadataFetcher:
         self.infohash_db = infohash_db
 
         self.fetches_in_flight = 0
+        self.canceled_with_no_fetch = 0
+        self.fetched = 0
 
         self._fetchers_semaphore = trio.Semaphore(MAX_FETCHERS)
+        self._total_conns_limit = trio.CapacityLimiter(MAX_TOTAL_CONNS)
 
     async def run(self):
         logger.info('Metadata fetcher started.')
@@ -54,12 +57,11 @@ class MetadataFetcher:
 
         fetched = False
         conns_limit = trio.CapacityLimiter(MAX_CONNS_PER_FETCHER)
-        total_conns_limit = trio.CapacityLimiter(MAX_TOTAL_CONNS)
         async def fetch(ih, ip, port, nursery):
             nonlocal fetched
             self.fetches_in_flight += 1
             try:
-                async with conns_limit, total_conns_limit:
+                async with conns_limit, self._total_conns_limit:
                     bt = Bittorrent(ip, port, ih)
                     await bt.run()
             finally:
@@ -71,31 +73,51 @@ class MetadataFetcher:
                 nursery.cancel_scope.cancel()
 
         peer_send_chan, peer_recv_chan = trio.open_memory_channel(0)
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(dht.fetch_peers, infohash, peer_send_chan)
-            for ip, port in initial_peers:
-                nursery.start_soon(fetch, infohash, ip, port, nursery)
-            async for ip, port in peer_recv_chan:
-                nursery.start_soon(fetch, infohash, ip, port, nursery)
+        started_fetch = False
+        with trio.move_on_after(60) as cancel_scope:
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(dht.fetch_peers, infohash, peer_send_chan)
+                for ip, port in initial_peers:
+                    nursery.start_soon(fetch, infohash, ip, port, nursery)
+                    started_fetch = True
+                async for ip, port in peer_recv_chan:
+                    nursery.start_soon(fetch, infohash, ip, port, nursery)
+                    started_fetch = True
+
+        if cancel_scope.cancelled_caught:
+            if not started_fetch:
+                # timed out without even starting a single fetcher
+                # (due to no peers)
+                self.canceled_with_no_fetch += 1
 
         peer_send_chan.close()
         peer_recv_chan.close()
 
-        if not fetched:
+        if fetched:
+            self.fetched += 1
+        else:
             await self.infohash_db.mark_fetch_metadata_failure(infohash)
+
+    @property
+    def stats(self):
+        return {
+            'fetches_running': self.fetches_in_flight,
+            'cancel_no_fetch': self.canceled_with_no_fetch,
+            'fetched': self.fetched,
+        }
 
 
 async def periodically_log_stats(stats_period, dht, fetcher):
     while True:
         await trio.sleep(stats_period)
+        dht_stats = ' '.join(
+            f'{k}={v}'for k, v in dht.stats.items())
+        fetcher_stats = ' '.join(
+            f'{k}={v}'for k, v in fetcher.stats.items())
         logger.info(
-            f'Stats: rt-size={dht._routing_table.size()} '
-            f'get_peers={dht.get_peers_in_flight} '
-            f'gp_no_resp={dht.get_peers_no_response} '
-            f'gp_error={dht.get_peers_errors} '
-            f'gp_w_values={dht.get_peers_with_values} '
-            f'gp_w_nodes={dht.get_peers_with_nodes} '
-            f'fetches={fetcher.fetches_in_flight}'
+            f'Stats: rt-size={dht._routing_table.size()} ' +
+            dht_stats + ' ' +
+            fetcher_stats
         )
 
 
@@ -142,7 +164,7 @@ async def main():
 
     parser.add_argument(
         '--database', '-d', default='postgresql+asyncpg:///tridht',
-        help='The postgres database to use. Defaults to "%(defaults)s".')
+        help='The postgres database to use. Defaults to "%(default)s".')
 
     args = parser.parse_args()
 

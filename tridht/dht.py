@@ -59,6 +59,9 @@ class Dht:
         self.started = trio.Event()
         self.ready = trio.Event()
 
+        self.fetch_peers_in_flight = 0
+        self.find_nodes_waiting = 0
+        self.find_nodes_running = 0
         self.get_peers_in_flight = 0
         self.get_peers_no_response = 0
         self.get_peers_errors = 0
@@ -141,11 +144,50 @@ class Dht:
         self._own_ihdb = False
         self._infohash_db = value
 
+    @property
+    def stats(self):
+        return {
+            'get_peers': self.get_peers_in_flight,
+            'gp_no_resp': self.get_peers_no_response,
+            'gp_error': self.get_peers_errors,
+            'gp_w_values': self.get_peers_with_values,
+            'gp_w_nodes': self.get_peers_with_nodes,
+            'waiting_chans': len(self._response_channels),
+            'fetch_peers': self.fetch_peers_in_flight,
+            'fn_wait': self.find_nodes_waiting,
+            'fn_run': self.find_nodes_running,
+        }
+
     async def fetch_peers(self, infohash, return_channel):
+        try:
+            self.fetch_peers_in_flight += 1
+            return await self._fetch_peers(infohash, return_channel)
+        finally:
+            self.fetch_peers_in_flight -= 1
+
+    async def _fetch_peers(self, infohash, return_channel):
         already_tried_for_nodes = set()
         already_returned_peers = set()
         no_response_nodes = set()
-        async def find_nodes_or_peers(node, nursery):
+        sem = trio.Semaphore(100)
+        async def launch_find_nodes_or_peers(node, nursery):
+            async def find_and_release(node, nursery):
+                try:
+                    await _find_nodes_or_peers(node, nursery)
+                finally:
+                    sem.release()
+                    self.find_nodes_running -= 1
+
+            with trio.move_on_after(10) as cancel_scope:
+                try:
+                    self.find_nodes_waiting += 1
+                    await sem.acquire()
+                finally:
+                    self.find_nodes_waiting -= 1
+                self.find_nodes_running += 1
+                nursery.start_soon(find_and_release, node, nursery)
+
+        async def _find_nodes_or_peers(node, nursery):
             if not self._validate_bep42_node_id(node.id, node.ip):
                 return
 
@@ -195,8 +237,7 @@ class Dht:
                 for node in nodes:
                     if node not in already_tried_for_nodes and \
                        node not in no_response_nodes:
-                        nursery.start_soon(
-                            find_nodes_or_peers, node, nursery)
+                        await launch_find_nodes_or_peers(node, nursery)
                         already_tried_for_nodes.add(node)
             else:
                 logger.debug(
@@ -205,7 +246,7 @@ class Dht:
         nodes = self._routing_table.get_close_nodes(infohash)
         async with trio.open_nursery() as nursery:
             for node in nodes:
-                nursery.start_soon(find_nodes_or_peers, node, nursery)
+                await launch_find_nodes_or_peers(node, nursery)
 
         return_channel.close()
         logger.debug(f'Finished fetch_peers for: {infohash.hex()}')
