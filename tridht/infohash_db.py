@@ -161,51 +161,6 @@ class InfohashDb:
 
     async def get_some_due_infohashes(self):
         return await self._run_cmd(_Cmd.GET_SOME_DUE_INFOHASHES)
-        return await trio_asyncio.aio_as_trio(self._aio_get_some_due_infohashes)()
-        # returns some infohashes due for metadata retrieval. The
-        # function first selects 1000 records out of the top
-        # infohashes with no metadata which are either due, or their
-        # last announce time is within the last one hour.
-        #
-        # return value is a list of tuples like (infohash, peer_ip,
-        # peer_port). peer_ip and peer_port are the contact
-        # information of the last peer to announce the infohash, and
-        # might be None if not available.
-        stmt = (
-            select(Infohash.ih,
-                   Infohash.last_announce_ip,
-                   Infohash.last_announce_port)
-            .where(Infohash.metadata_==None)
-            .where(Infohash.fetch_due_time<=datetime.now())
-            .order_by(Infohash.score.desc())
-            .limit(1000)
-        )
-        results = await trio_asyncio.aio_as_trio(self._session.execute)(stmt)
-        results = list(results)
-        results = random.sample(results, 10)
-
-    async def _aio_get_some_due_infohashes(self):
-        # returns some infohashes due for metadata retrieval. The
-        # function first selects 1000 records out of the top
-        # infohashes with no metadata which are either due, or their
-        # last announce time is within the last one hour.
-        #
-        # return value is a list of tuples like (infohash, peer_ip,
-        # peer_port). peer_ip and peer_port are the contact
-        # information of the last peer to announce the infohash, and
-        # might be None if not available.
-        stmt = (
-            select(Infohash.ih,
-                   Infohash.last_announce_ip,
-                   Infohash.last_announce_port)
-            .where(Infohash.metadata_==None)
-            .where(Infohash.fetch_due_time<=datetime.now())
-            .order_by(Infohash.score.desc())
-            .limit(1000)
-        )
-        results = await self._session.execute(stmt)
-        results = list(results)
-        results = random.sample(results, 10)
 
     def serialize(self):
         return {}
