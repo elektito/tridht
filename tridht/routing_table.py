@@ -189,8 +189,9 @@ class BucketRoutingTable(BaseRoutingTable):
                     del self._nodes[bad_node.id]
                     self._nodes[node.id] = node
                     return
-                self.dht.retry_add_node_after_refresh(
-                    node, self._nodes.values())
+                #self.dht.retry_add_node_after_refresh(
+                #    node, self._nodes.values())
+                logger.debug('Not adding node because bucket is full.')
 
     def find_node(self, node_id=None, node_ip=None, node_port=None):
         if self._is_split:
