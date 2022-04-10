@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.dialects.postgresql import INET, Insert
+from sqlalchemy.dialects.postgresql import INET, JSONB, Insert
 from sqlalchemy import Column, LargeBinary, Integer, DateTime, Computed
 from sqlalchemy import text, update
 from sqlalchemy.future import select
+from .utils import metadata_to_json
+from .bencode import bdecode
 
 Base = declarative_base()
 
@@ -24,6 +26,7 @@ class Infohash(Base):
         Integer,
         Computed('ih_score(get_peers, announces, samples, fetch_failures)'),
     )
+    parsed_metadata = Column(JSONB)
 
     @staticmethod
     async def add(session, ih):
@@ -102,7 +105,14 @@ class Infohash(Base):
 
     @staticmethod
     async def aio_store_metadata(session, ih, metadata):
-        stmt = update(Infohash).filter_by(ih=ih).values(metadata_=metadata)
+        parsed_metadata, _ = bdecode(metadata)
+        parsed_metadata = metadata_to_json(parsed_metadata)
+        stmt = (
+            update(Infohash)
+            .filter_by(ih=ih)
+            .values(metadata_=metadata,
+                    parsed_metadata=parsed_metadata)
+        )
         result = await session.execute(stmt)
         if result.rowcount == 0:
             # infohash was not in database
