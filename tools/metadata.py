@@ -1,7 +1,9 @@
 import argparse
+from pprint import pprint
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tridht.bencode import bdecode
+from tridht.utils import metadata_to_json
 
 
 def fmt_value(v):
@@ -49,6 +51,11 @@ def main():
         '--database', '-d', default='postgresql:///tridht',
         help='The postgres database to use. Defaults to "%(default)s".')
 
+    parser.add_argument(
+        '--json', '-j', action='store_true',
+        help='Also print the json form of the metadata as returned by '
+        'the metadata_to_json function.')
+
     args = parser.parse_args()
 
     engine = create_engine(args.database)
@@ -77,6 +84,10 @@ def main():
             print(fmt_files(v))
         else:
             print(f'{k.decode("ascii")}: {fmt_value(v)}')
+
+    if args.json:
+        print('\nJSON:')
+        pprint(metadata_to_json(metadata))
 
 
 if __name__ == '__main__':
