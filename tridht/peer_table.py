@@ -1,21 +1,29 @@
 import time
 import random
 import trio
+from datetime import timedelta, datetime
 from collections import defaultdict
 
 K = 8
 
 class PeerTable:
-    def __init__(self):
+    def __init__(self, db):
         self.ready = trio.Event()
+        self.stopped = trio.Event()
 
+        self._db = db
+        self._quit = trio.Event()
         self._peer_timeout = 24 * 3600
+        self._announce_age = timedelta(days=1)
         self._peers = defaultdict(set)
         self._update_times = {}
 
-    def announce(self, info_hash, ip, port):
+    async def announce(self, info_hash, node_id, ip, port):
         self._peers[info_hash].add((ip, port))
         self._update_times[ip, port] = time.time()
+
+        await self._db.add_infohash_for_announce(
+            info_hash, node_id, ip, port)
 
     def get_peers(self, info_hash):
         peers = self._peers.get(info_hash)
@@ -27,7 +35,10 @@ class PeerTable:
             return random.sample(peers, K)
 
     def get_sample(self, sample_size, compact=False):
-        sample = random.sample(list(self._peers), sample_size)
+        if len(self._peers) <= sample_size:
+            sample = list(self._peers)
+        else:
+            sample = random.sample(list(self._peers), sample_size)
         if compact:
             sample = b''.join(sample)
         return sample
@@ -35,45 +46,34 @@ class PeerTable:
     def size(self):
         return len(self._peers)
 
-    def serialize(self):
-        return {
-            'peers': {
-                ih.hex(): [[ip, port] for ip, port in peers]
-                for ih, peers in self._peers.items()
-            },
-            'update_times': {
-                f'{ip},{port}': value
-                for (ip, port), value in self._update_times.items()
-            }
-        }
-
-    @classmethod
-    def deserialize(cls, state):
-        pt = cls()
-        pt._peers = defaultdict(set, {
-            bytes.fromhex(ih): {(ip, port) for ip, port in peers}
-            for ih, peers in state['peers'].items()
-        })
-        pt._update_times = {
-            (k.split(',')[0], int(k.split(',')[1])): v
-            for k, v in state['update_times'].items()
-        }
-        return pt
+    def stop(self):
+        self._quit.set()
 
     async def run(self):
+        await self._load()
         self.ready.set()
-        while True:
-            now = time.time()
-            to_delete = []
-            for (ip, port), update_time in self._update_times.items():
-                if now - update_time > self._peer_timeout:
-                    to_delete.append((ip, port))
-            for ip, port in to_delete:
-                del self._update_times[ip, port]
-                for ih in self._peers:
-                    try:
-                        self._peers[ih].remove((ip, port))
-                    except KeyError:
-                        pass
 
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(self._periodically_reload)
+
+            await self._quit.wait()
+
+            nursery.cancel_scope.cancel()
+
+        self.stopped.set()
+
+    async def _periodically_reload(self):
+        while True:
             await trio.sleep(60)
+
+            # we reload peers periodically and rebuild peer table so
+            # that we get any updates from other instances, and also
+            # expire old announces
+            await self._load()
+
+    async def _load(self):
+        self._announces = await self._db.get_announces(
+            age=self._announce_age)
+        self._peers = defaultdict(set)
+        for a in self._announces:
+            self._peers[a.ih].add((a.ip, a.port))

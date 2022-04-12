@@ -1,20 +1,15 @@
 import argparse
 import logging
-import logging.config
-import random
 import signal
-import time
 import json
 import trio
 from functools import partial
 from urllib.parse import urlsplit
-from trio import socket
-from .bencode import bencode, bdecode, BDecodingError
 from .dht import Dht
 from .routing_table import FullBucketRoutingTable
 from .peer_table import PeerTable
-from .infohash_db import InfohashDb
-from .utils import config_logging
+from .database import Database
+from .utils import config_logging, Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +18,10 @@ def log_level_value(value):
     return value.upper()
 
 
-async def write_state(filename, dhts, routing_table, peer_table,
-                      infohash_db):
+async def write_state(filename, dhts):
     state = {
-        'rt': routing_table.serialize(),
-        'pt': peer_table.serialize(),
-        'ihdb': infohash_db.serialize(),
         'dhts': [
-            dht.serialize(serialize_routing_table=False,
-                          serialize_peer_table=False)
+            dht.get_state()
             for dht in dhts
         ],
     }
@@ -40,8 +30,7 @@ async def write_state(filename, dhts, routing_table, peer_table,
         await f.write(state)
 
 
-async def load_state(args, RoutingTableClass, PeerTableClass,
-                     InfohashDbClass):
+async def load_state(args, dhts):
     try:
         async with await trio.open_file(args.state_file, 'rb') as f:
             state = await f.read()
@@ -50,29 +39,16 @@ async def load_state(args, RoutingTableClass, PeerTableClass,
         return False, None, None, None, None
 
     state = json.loads(state)
-    rt = RoutingTableClass.deserialize(state['rt'])
-    pt = PeerTableClass.deserialize(state['pt'])
-    ihdb = InfohashDbClass.deserialize(state.get('ihdb'))
-    dhts = [
-        Dht.deserialize(dht_state)
-        for dht_state in state['dhts']
-    ]
+    for dht_state, dht in zip(state['dhts'], dhts):
+        dht.load_state(dht_state)
 
-    if len(dhts) != args.count:
+    if len(dhts) < len(state['dhts']):
         logger.warning(
-            f'Number of DHTs in saved state ({len(dhts)}) does not '
-            f'match requested count ({args.count}). Ignoring saved '
-            f'state.')
-        return False, None, None, None, None
-
-    ports = range(args.port, args.port + args.count)
-    for dht, port in zip(dhts, ports):
-        dht.routing_table = rt
-        dht.peer_table = pt
-        dht.infohash_db = ihdb
-        dht.port = port
-
-    return True, rt, pt, ihdb, dhts
+            'Not enough DHT states in state files. Some nodes will not '
+            'have their state loaded.')
+    if len(dhts) > len(state['dhts']):
+        logger.warning(
+            'More DHT states in state file than DHT nodes started.')
 
 
 def node(value):
@@ -96,21 +72,19 @@ async def periodically_log_stats(stats_period, dhts, routing_table,
         )
 
 
-async def periodically_save_state(args, dhts, routing_table,
-                                  peer_table, infohash_db):
+async def periodically_save_state(args, dhts):
     while True:
         await trio.sleep(60)
-        await write_state(
-            args.state_file, dhts, routing_table, peer_table,
-            infohash_db)
+        await write_state(args.state_file, dhts)
 
 
-async def signal_handler(nursery):
+async def signal_handler(nursery, quit_event):
     signals_to_handle = [signal.SIGINT, signal.SIGTERM]
     with trio.open_signal_receiver(*signals_to_handle) as sig:
         async for signal_event in sig:
             logger.info('Received signal. Quitting...')
-            nursery.cancel_scope.cancel()
+            quit_event.set()
+            break
 
 
 async def main():
@@ -160,54 +134,52 @@ async def main():
         '--state-file', default='tridht-state.json',
         help='The file to write the state to and read it from.')
 
+    parser.add_argument(
+        '--database', '-d', default='postgresql+asyncpg:///tridht',
+        help='The postgres database to use. Defaults to "%(default)s".')
+
     args = parser.parse_args()
 
     config_logging(args.log_level)
 
     RoutingTableClass = FullBucketRoutingTable
     PeerTableClass = PeerTable
-    InfohashDbClass = InfohashDb
 
     async with trio.open_nursery() as nursery:
         seed_host, seed_port = args.seed
 
-        nursery.start_soon(partial(signal_handler, nursery=nursery))
+        quit = trio.Event()
+        nursery.start_soon(partial(signal_handler,
+                                   quit_event=quit,
+                                   nursery=nursery))
+
+        db = Database(args.database)
+        nursery.start_soon(db.run)
+        await db.ready.wait()
+
+        routing_table = RoutingTableClass(db)
+        peer_table = PeerTableClass(db)
+        dhts = [
+            Dht(args.port + i,
+                db=db,
+                seed_host=seed_host,
+                seed_port=seed_port,
+                routing_table=routing_table,
+                peer_table=peer_table,
+            )
+            for i in range(args.count)
+        ]
 
         if not args.no_load_state:
-            (
-                have_state, routing_table, peer_table, infohash_db, dhts
-            ) = await load_state(
-                args, RoutingTableClass, PeerTableClass, InfohashDb)
-        else:
-            have_state = False
-
-        if not have_state:
-            routing_table = RoutingTableClass()
-            peer_table = PeerTableClass()
-            infohash_db = InfohashDbClass()
-            dhts = [
-                Dht(args.port + i,
-                    seed_host=seed_host,
-                    seed_port=seed_port,
-                    routing_table=routing_table,
-                    peer_table=peer_table,
-                    infohash_db=infohash_db,
-                )
-                for i in range(args.count)
-            ]
-        else:
-            logger.info('Using saved state.')
+            await load_state(args, dhts)
 
         routing_table.dht = dhts[0]
 
         if not args.no_save_state:
-            nursery.start_soon(
-                periodically_save_state,
-                args, dhts, routing_table, peer_table, infohash_db)
+            nursery.start_soon(periodically_save_state, args, dhts)
 
         nursery.start_soon(routing_table.run)
         nursery.start_soon(peer_table.run)
-        nursery.start_soon(infohash_db.run)
 
         if args.stats:
             nursery.start_soon(
@@ -218,11 +190,41 @@ async def main():
         for dht in dhts:
             nursery.start_soon(dht.run)
 
+        await quit.wait()
+
+        logger.info('Stopping DHT nodes...')
+        for dht in dhts:
+            dht.stop()
+
+        logger.info('Stopping routing table...')
+        routing_table.stop()
+
+        logger.info('Stopping peer table...')
+        peer_table.stop()
+
+        logger.info('Waiting for DHT nodes to stop...')
+        for dht in dhts:
+            await dht.stopped.wait()
+
+        logger.info('Waiting for routing table to stop...')
+        await routing_table.stopped.wait()
+
+        logger.info('Waiting for peer table to stop...')
+        await peer_table.stopped.wait()
+
+        logger.info('Stopping database...')
+        db.stop()
+
+        logger.info('Waiting for database to stop...')
+        await db.stopped.wait()
+
+        logger.info('Canceling remaining tasks...')
+        nursery.cancel_scope.cancel()
+
     logger.info('Writing state...')
     if not args.no_save_state:
-        await write_state(
-            args.state_file, dhts, routing_table, peer_table,
-            infohash_db)
+
+        await write_state(args.state_file, dhts)
 
     logger.info('Done.')
 

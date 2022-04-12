@@ -4,6 +4,7 @@ import random
 import time
 import os
 import trio
+from datetime import datetime
 from functools import partial
 from ipaddress import IPv4Address
 from copy import copy
@@ -12,14 +13,12 @@ from crc32c import crc32c
 from .bencode import bencode, bdecode, BDecodingError
 from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
-from .infohash_db import InfohashDb
 from .node import Node
 
 logger = logging.getLogger(__name__)
 
 DefaultRoutingTable = BucketRoutingTable
 DefaultPeerTable = PeerTable
-DefaultInfohashDb = InfohashDb
 
 def get_random_node_id():
     node_id = random.randint(0, 2**160)
@@ -40,16 +39,19 @@ class DhtResponseMessage:
 
 
 class Dht:
-    def __init__(self, port, *, seed_host, seed_port,
-                 response_timeout=20, retries=2,
-                 routing_table=None,
-                 peer_table=None,
-                 infohash_db=None,
+    def __init__(self, port, db, *,
+                 seed_host,
+                 seed_port,
+                 routing_table,
+                 peer_table,
+                 response_timeout=20,
+                 retries=2,
                  sample_infohash_interval=3600,
                  infohash_sample_size=20,
                  no_index=False,
                  no_expand=False,
                  readonly=False):
+        self.db = db
         self.port = port
         self.no_index = no_index
         self.no_expand = no_expand
@@ -58,6 +60,8 @@ class Dht:
 
         self.started = trio.Event()
         self.ready = trio.Event()
+        self.stopped = trio.Event()
+        self._quit = trio.Event()
 
         self.fetch_peers_in_flight = 0
         self.find_nodes_waiting = 0
@@ -80,69 +84,19 @@ class Dht:
         self._self_ip_votes = {}
         self._ip = None
 
+        ############## allow a command-line option to pass self-ip
+        #self._ip = '143.178.219.5'
+        self._ip = '172.104.143.244'
+        self.node_id = self._generate_bep42_node_id(self._ip)
+        ##############
+
         self._prev_token_secret = None
         self._cur_token_secret = None
-
-        if routing_table is not None:
-            logger.debug('Using passed routing table.')
-            self._routing_table = routing_table
-            self._own_routing_table = False
-        else:
-            logger.debug('Creating new routing table.')
-            self._routing_table = DefaultRoutingTable(self)
-            self._own_routing_table = True
-
-        if peer_table is not None:
-            logger.debug('Using passed peer table.')
-            self._peer_table = peer_table
-            self._own_peer_table = False
-        else:
-            logger.debug('Creating new peer table.')
-            self._peer_table = DefaultPeerTable()
-            self._own_peer_table = True
-
-        if infohash_db is not None:
-            logger.debug('Using passed infohash db.')
-            self._infohash_db = infohash_db
-            self._own_ihdb = False
-        else:
-            logger.debug('Creating new infohash db.')
-            self._infohash_db = DefaultInfohashDb()
-            self._own_ihdb = True
-
+        self._routing_table = routing_table
+        self._peer_table = peer_table
         self._infohash_sample_size = infohash_sample_size
         self._sample_infohash_interval = sample_infohash_interval
         self._update_infohash_sample()
-
-    @property
-    def routing_table(self):
-        return self._routing_table
-
-    @routing_table.setter
-    def routing_table(self, value):
-        assert not self.started.is_set()
-        self._own_routing_table = False
-        self._routing_table = value
-
-    @property
-    def peer_table(self):
-        return self._peer_table
-
-    @peer_table.setter
-    def peer_table(self, value):
-        assert not self.started.is_set()
-        self._own_peer_table = False
-        self._peer_table = value
-
-    @property
-    def infohash_db(self):
-        return self._infohash_db
-
-    @infohash_db.setter
-    def infohash_db(self, value):
-        assert not self.started.is_set()
-        self._own_ihdb = False
-        self._infohash_db = value
 
     @property
     def stats(self):
@@ -252,6 +206,19 @@ class Dht:
         logger.debug(f'Finished fetch_peers for: {infohash.hex()}')
 
     async def run(self):
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(self._main_loop)
+
+            await self._quit.wait()
+
+            nursery.cancel_scope.cancel()
+
+        self.stopped.set()
+
+    def stop(self):
+        self._quit.set()
+
+    async def _main_loop(self):
         logger.info(f'Starting DHT on port {self.port}...')
 
         logger.info('Binding server socket...')
@@ -262,30 +229,20 @@ class Dht:
             self._nursery = nursery
             self.started.set()
 
+            await self._routing_table.ready.wait()
+            await self._peer_table.ready.wait()
+
             nursery.start_soon(self._seed_routing_table)
 
             if not self.readonly:
                 nursery.start_soon(self._periodically_update_infohash_sample)
                 nursery.start_soon(self._keep_token_secrets_updated)
 
-            if self._own_routing_table:
-                nursery.start_soon(self._routing_table.run)
-
-            if self._own_peer_table:
-                nursery.start_soon(self._peer_table.run)
-
-            if self._own_ihdb:
-                nursery.start_soon(self._infohash_db.run)
-
             if not self.no_expand:
                 nursery.start_soon(self._periodically_expand_routing_table)
 
             if not self.no_index:
                 nursery.start_soon(self._index_infohashes)
-
-            await self._routing_table.ready.wait()
-            await self._peer_table.ready.wait()
-            await self._infohash_db.ready.wait()
 
             while True:
                 try:
@@ -300,54 +257,19 @@ class Dht:
 
         logger.info(f'DHT on port {self.port} finished.')
 
-    def serialize(self, serialize_routing_table=True,
-                        serialize_peer_table=True):
-        rt = None
-        if serialize_routing_table:
-            rt = self._routing_table.serialize()
-
-        pt = None
-        if serialize_peer_table:
-            pt = self._peer_table.seiralize()
-
+    def get_state(self):
         return {
-            'rt': rt,
-            'pt': pt,
-            'port': self.port,
             'node_id': self.node_id.hex(),
-            'response_timeout': self.response_timeout,
-            'retries': self.retries,
-            'seed_host': self._seed_host,
-            'seed_port': self._seed_port,
             'next_tid': self._next_tid,
             'prev_token_secret': self._prev_token_secret.hex(),
             'cur_token_secret': self._cur_token_secret.hex(),
         }
 
-    @classmethod
-    def deserialize(cls, state):
-        rt = None
-        if state['rt'] is not None:
-            rt = DefaultRoutingTable.deserialize(state['rt'])
-
-        pt = None
-        if state['pt'] is not None:
-            pt = DefaultPeerTable.deserialize(state['pt'])
-
-        dht = cls(
-            state['port'],
-            seed_host=state['seed_host'],
-            seed_port=state['seed_port'],
-            response_timeout=state['response_timeout'],
-            retries=state['retries'],
-            routing_table=rt,
-            peer_table=pt,
-        )
-        dht.node_id = bytes.fromhex(state['node_id'])
-        dht._next_tid = state['next_tid']
-        dht._prev_token_secret = bytes.fromhex(state['prev_token_secret'])
-        dht._cur_token_secret = bytes.fromhex(state['cur_token_secret'])
-        return dht
+    def load_state(self, state):
+        self.node_id = bytes.fromhex(state['node_id'])
+        self._next_tid = state['next_tid']
+        self._prev_token_secret = bytes.fromhex(state['prev_token_secret'])
+        self._cur_token_secret = bytes.fromhex(state['cur_token_secret'])
 
     async def _index_infohashes(self):
         not_supporting = set()
@@ -396,7 +318,7 @@ class Dht:
 
             for i in range(0, len(samples), 20):
                 ih = samples[i:i+20]
-                await self._infohash_db.add_infohash_for_sample(ih)
+                await self.db.add_infohash_for_sample(ih)
             if samples:
                 logger.info(
                     f'Sampled {len(samples)//20} infohashes '
@@ -526,7 +448,7 @@ class Dht:
             sample_size = self._peer_table.size()
 
         self._cur_infohash_sample = self._peer_table.get_sample(
-            sample_size, compact=True)
+            self._infohash_sample_size)
 
     async def _periodically_expand_routing_table(self):
         while True:
@@ -812,7 +734,7 @@ class Dht:
             f'Got a get_peers query from {node_id.hex()} for info_hash '
             f'{info_hash.hex()}')
 
-        await self._infohash_db.add_infohash_for_get_peers(info_hash)
+        await self.db.add_infohash_for_get_peers(info_hash)
 
         peers = self._peer_table.get_peers(info_hash)
         if peers:
@@ -899,9 +821,8 @@ class Dht:
         if implied_port == 1:
             port = addr[1]
 
-        self._peer_table.announce(info_hash, addr[0], port)
-        await self._infohash_db.add_infohash_for_announce(
-            info_hash, addr[0], port)
+        await self._peer_table.announce(
+            info_hash, node_id, addr[0], port)
 
         return {
             b't': tid,
@@ -984,7 +905,7 @@ class Dht:
                 logger.info(
                     'Node obtained from seed did not reply to ping.')
             return
-        node.last_response_time = time.time()
+        node.last_response_time = datetime.now()
         node.ever_responded = True
         self._routing_table.add_node(node)
 
@@ -1047,6 +968,10 @@ class Dht:
             msg[b'ip'] = ip + port
 
         msg = bencode(msg)
+
+        if isinstance(addr[0], IPv4Address):
+            addr = (str(addr[0]), addr[1])
+
         try:
             await self._sock.sendto(msg, addr)
         except OSError as e:
@@ -1193,6 +1118,6 @@ class Dht:
         if resp is None:
             node.bad = True
             return
-        now = time.time()
+        now = datetime.now()
         node.last_query_time = node.last_response_time = now
         node.ever_responded = True

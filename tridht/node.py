@@ -1,4 +1,4 @@
-import time
+from datetime import datetime, timedelta
 
 
 class Node:
@@ -39,14 +39,15 @@ class Node:
 
     @property
     def good(self):
-        # should we use wall clock time here?
+        now = datetime.now()
+        fifteen_minutes = timedelta(minutes=15)
         return (
             (self.last_response_time is not None and
-             time.time() - self.last_response_time <= 15 * 60)
+             now - self.last_response_time <= fifteen_minutes)
             or
             (self.ever_responded and
              self.last_query_time is not None and
-             self.last_query_time <= 15 * 60)
+             now - self.last_query_time <= fifteen_minutes)
         )
 
     @property

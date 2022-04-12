@@ -1,11 +1,14 @@
 from datetime import datetime, timedelta
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.postgresql import INET, JSONB, Insert
-from sqlalchemy import Column, LargeBinary, Integer, DateTime, Computed
-from sqlalchemy import text, update
+from sqlalchemy import (
+    Column, LargeBinary, Integer, DateTime, Computed, Boolean,
+)
+from sqlalchemy import text, update, delete
 from sqlalchemy.future import select
 from .utils import metadata_to_json
 from .bencode import bdecode
+from .node import Node as DhtNode
 
 Base = declarative_base()
 
@@ -152,3 +155,97 @@ class Infohash(Base):
             # infohash was not in database
             await Infohash.add(session, ih)
             result = await session.execute(stmt)
+
+
+class Node(Base):
+    __tablename__ = 'nodes'
+
+    id = Column(LargeBinary, primary_key=True)
+    ip = Column(INET, nullable=False)
+    port = Column(Integer, nullable=False)
+    last_response_time = Column(DateTime)
+    last_query_time = Column(DateTime)
+
+    @staticmethod
+    async def aio_add_nodes(session, nodes):
+        for node in nodes:
+            await session.execute(
+                Insert(Node)
+                .values(id=node.id,
+                        ip=node.ip,
+                        port=node.port,
+                        last_response_time=node.last_response_time,
+                        last_query_time=node.last_query_time)
+                .on_conflict_do_update(
+                    constraint=Node.__table__.primary_key,
+                    set_={
+                        'ip': node.ip,
+                        'port': node.port,
+                        'last_response_time': node.last_response_time,
+                        'last_query_time': node.last_query_time,
+                    },
+                )
+            )
+
+    @staticmethod
+    async def aio_del_nodes(session, nodes):
+        node_ids = [n.id for n in nodes]
+        await session.execute(
+            delete(Node)
+            .where(Node.id.in_(node_ids))
+        )
+
+    @staticmethod
+    async def aio_get_all_nodes(session):
+        db_nodes = await session.execute(
+            select(Node.id,
+                   Node.ip,
+                   Node.port,
+                   Node.last_query_time,
+                   Node.last_response_time)
+        )
+        dht_nodes = []
+        for id, ip, port, last_query_time, last_resp_time in db_nodes:
+            node = DhtNode(id, ip, port)
+            node.last_query_time = last_query_time
+            node.last_response_time = last_resp_time
+            dht_nodes.append(node)
+
+        return dht_nodes
+
+
+class Announce(Base):
+    __tablename__ = 'announces'
+
+    id = Column(Integer, primary_key=True)
+    ih = Column(LargeBinary)
+    node_id = Column(LargeBinary)
+    time = Column(DateTime)
+    peer_ip = Column(INET)
+    peer_port = Column(Integer)
+
+    @staticmethod
+    async def aio_add_announce(session, ih, node_id, ip, port):
+        await session.execute(
+            Insert(Announce)
+            .values(ih=ih,
+                    node_id=node_id,
+                    peer_ip=ip,
+                    peer_port=port,
+                    time=datetime.now())
+        )
+
+    @staticmethod
+    async def aio_get_announces(session, age: timedelta):
+        result = await session.execute(
+            select(Announce)
+            .where(Announce.time <= datetime.now() - age)
+        )
+
+        # unbind the objects from the session since we're only
+        # interested in these for their data
+        result = list(result.scalars())
+        for obj in result:
+            session.expunge(obj)
+
+        return result

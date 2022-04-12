@@ -1,6 +1,6 @@
-import time
 import logging
 import trio
+from datetime import datetime
 from ipaddress import IPv4Address
 from .node import Node
 from .utils import hamming_distance, node_distance_to
@@ -10,20 +10,43 @@ logger = logging.getLogger(__name__)
 
 
 class BaseRoutingTable:
-    def __init__(self, dht):
+    def __init__(self, db, dht, *, save_to_db_period=30):
         self.dht = dht
         self.ready = trio.Event()
+        self.stopped = trio.Event()
+        self._db = db
+        self._save_to_db_period = save_to_db_period
+        self._recently_deleted_nodes = []
+        self._quit = trio.Event()
+        self._cur_save = None
 
     async def run(self):
         await self.dht.started.wait()
+        await self._load()
         self.ready.set()
 
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(self._periodically_save_to_db)
+            nursery.start_soon(self._main_loop)
+
+            await self._quit.wait()
+
+            await self._save()
+            if self._cur_save:
+                # there was a save already in progress
+                logger.info('Waiting for current save to finish...')
+                await self._cur_save.wait()
+            nursery.cancel_scope.cancel()
+
+        self.stopped.set()
+
+    async def _main_loop(self):
         while True:
             logger.debug('Looking for bad nodes...')
             to_remove = []
             for node in self.get_all_nodes():
                 if node.questionable:
-                    self.dht.check_node_goodness(node)
+                    await self.dht.check_node_goodness(node)
                     continue
                 if node.bad:
                     logger.info(f'Removing bad node: {node.id.hex()}')
@@ -34,18 +57,34 @@ class BaseRoutingTable:
 
             await trio.sleep(15 * 60)
 
-    def serialize(self):
-        return {
-            'nodes': [n.serialize() for n in self.get_all_nodes()],
-        }
+    def stop(self):
+        self._quit.set()
 
-    @classmethod
-    def deserialize(cls, state):
-        rt = cls(None)
-        for node_state in state['nodes']:
-            node = Node.deserialize(node_state)
-            rt.add_node(node)
-        return rt
+    async def _periodically_save_to_db(self):
+        while True:
+            await trio.sleep(self._save_to_db_period)
+            await self._save()
+
+    async def _save(self):
+        if self._cur_save:
+            return
+
+        self._cur_save = trio.Event()
+        logger.info('Saving routing table to the database...')
+        await self._db.add_nodes(list(self.get_all_nodes()))
+        if self._recently_deleted_nodes:
+            await self._db.del_nodes(self._recently_deleted_nodes)
+            self._recently_deleted_nodes = []
+        logger.info('Routing table saved.')
+        self._cur_save.set()
+        self._cur_save = None
+
+    async def _load(self):
+        logger.info('Loading nodes from database...')
+        nodes = await self._db.get_all_nodes()
+        for node in nodes:
+            self.add_node(node)
+        logger.info(f'Loaded {len(nodes)} node(s).')
 
     def add_or_update_node(self, node_id, node_ip, node_port,
                            interaction):
@@ -57,9 +96,9 @@ class BaseRoutingTable:
             should_add_node = True
 
         if interaction == 'query':
-            node.last_query_time = time.time()
+            node.last_query_time = datetime.now()
         elif interaction == 'response_to_query':
-            node.last_response_time = time.time()
+            node.last_response_time = datetime.now()
             node.ever_responded = True
             node.bad = False
 
@@ -106,32 +145,60 @@ class BaseRoutingTable:
         return nodes
 
     def add_node(self, node):
+        if len(node.id) != 20:
+            logger.info(
+                'Not adding node because node id is not valid '
+                f'(length={len(node.id)}).')
+            return
+        return self._add_node(node)
+
+    def _add_node(self, node):
         raise NotImplementedError
 
     def find_node(self, node_id=None, node_ip=None, node_port=None):
+        return self._find_node(node_id, node_ip, node_port)
+
+    def _find_node(self, node_id=None, node_ip=None, node_port=None):
         raise NotImplementedError
 
     def remove(self, node):
+        self._recently_deleted_nodes.append(node)
+        return self._remove(node)
+
+    def _remove(self, node):
+        self._recently_deleted_nodes.extend(nodes)
         raise NotImplementedError
 
     def remove_nodes(self, nodes):
+        return self._remove_nodes(nodes)
+
+    def _remove_nodes(self, nodes):
         raise NotImplementedError
 
     def clear(self):
+        return self._clear()
+
+    def _clear(self):
         raise NotImplementedError
 
     def size(self):
+        return self._size()
+
+    def _size(self):
         raise NotImplementedError
 
     def get_all_nodes(self):
+        return self._get_all_nodes()
+
+    def _get_all_nodes(self):
         raise NotImplementedError
 
 
 class BucketRoutingTable(BaseRoutingTable):
     """A Routing Table implementation close to BEP 5 description."""
-    def __init__(self, dht=None, min_id=0, max_id=2**160, *,
+    def __init__(self, db, dht=None, min_id=0, max_id=2**160, *,
                  full=False, parent=None):
-        super().__init__(dht)
+        super().__init__(db, dht)
 
         self.min_id = min_id
         self.max_id = max_id
@@ -142,7 +209,7 @@ class BucketRoutingTable(BaseRoutingTable):
         self._full = full
         self._parent = parent
 
-    def add_node(self, node):
+    def _add_node(self, node):
         if self._is_split:
             if self._first_half._node_fits(node):
                 return self._first_half.add_node(node)
@@ -169,7 +236,7 @@ class BucketRoutingTable(BaseRoutingTable):
                     return True
 
                 if self.max_id - self.min_id <= K:
-                    logger.info(
+                    logger.debug(
                         f'Not adding node {node.id.hex()} because '
                         'bucket cannot be split any further.')
                     return False
@@ -193,7 +260,7 @@ class BucketRoutingTable(BaseRoutingTable):
                 #    node, self._nodes.values())
                 logger.debug('Not adding node because bucket is full.')
 
-    def find_node(self, node_id=None, node_ip=None, node_port=None):
+    def _find_node(self, node_id=None, node_ip=None, node_port=None):
         if self._is_split:
             node = self._first_half.find_node(
                 node_id, node_ip, node_port)
@@ -210,7 +277,7 @@ class BucketRoutingTable(BaseRoutingTable):
                         return node
                 return None
 
-    def remove(self, node):
+    def _remove(self, node):
         if self._is_split:
             self._first_half.remove(node)
             self._second_half.remove(node)
@@ -220,7 +287,7 @@ class BucketRoutingTable(BaseRoutingTable):
             except KeyError:
                 pass
 
-    def remove_nodes(self, nodes):
+    def _remove_nodes(self, nodes):
         if len(nodes) == 0:
             return
 
@@ -257,18 +324,18 @@ class BucketRoutingTable(BaseRoutingTable):
         else:
             yield self
 
-    def clear(self):
+    def _clear(self):
         self._first_half = None
         self._second_half = None
         self._nodes = {}
 
-    def size(self):
+    def _size(self):
         if self._is_split:
             return self._first_half.size() + self._second_half.size()
         else:
             return len(self._nodes)
 
-    def get_all_nodes(self):
+    def _get_all_nodes(self):
         if self._is_split:
             yield from self._first_half.get_all_nodes()
             yield from self._second_half.get_all_nodes()
@@ -354,9 +421,9 @@ class BucketRoutingTable(BaseRoutingTable):
     def _split(self):
         middle = self.min_id + (self.max_id - self.min_id) // 2
         self._first_half = type(self)(
-            self.dht, self.min_id, middle, parent=self)
+            self._db, self.dht, self.min_id, middle, parent=self)
         self._second_half = type(self)(
-            self.dht, middle, self.max_id, parent=self)
+            self._db, self.dht, middle, self.max_id, parent=self)
         for node in self._nodes.values():
             if self._first_half._node_fits(node):
                 self._first_half.add_node(node)
@@ -376,20 +443,22 @@ class BucketRoutingTable(BaseRoutingTable):
 
 
 class FullBucketRoutingTable(BucketRoutingTable):
-    def __init__(self, dht=None, min_id=0, max_id=2**160, parent=None):
-        super().__init__(dht, min_id, max_id, full=True, parent=parent)
+    def __init__(self, db, dht=None, min_id=0, max_id=2**160, parent=None):
+        super().__init__(db, dht, min_id, max_id,
+                         full=True,
+                         parent=parent)
 
 
 class FullRoutingTable(BaseRoutingTable):
     """A Routing Table implementation that keeps all nodes added to
 it. There are no buckets."""
 
-    def __init__(self, dht=None):
-        super().__init__(dht)
+    def __init__(self, db, dht=None):
+        super().__init__(db, dht)
 
         self._nodes = {}
 
-    def add_node(self, node):
+    def _add_node(self, node):
         prev_size = len(self._nodes)
         self._nodes[node.id] = node
         if len(self._nodes) > prev_size:
@@ -403,7 +472,7 @@ it. There are no buckets."""
                 node.id.hex())
             return False
 
-    def find_node(self, node_id=None, node_ip=None, node_port=None):
+    def _find_node(self, node_id=None, node_ip=None, node_port=None):
         if node_id:
             return self._nodes.get(node_id)
         else:
@@ -412,24 +481,24 @@ it. There are no buckets."""
                     return node
             return None
 
-    def remove(self, node):
+    def _remove(self, node):
         try:
             del self._nodes[node.id]
         except KeyError:
             pass
 
-    def remove_nodes(self, nodes):
+    def _remove_nodes(self, nodes):
         for node in nodes:
             try:
                 del self._nodes[node.id]
             except KeyError:
                 pass
 
-    def clear(self):
+    def _clear(self):
         self._nodes = {}
 
-    def size(self):
+    def _size(self):
         return len(self._nodes)
 
-    def get_all_nodes(self):
+    def _get_all_nodes(self):
         return self._nodes.values()

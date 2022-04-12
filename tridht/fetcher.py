@@ -5,8 +5,10 @@ import trio
 from urllib.parse import urlsplit
 from .bt import Bittorrent
 from .utils import config_logging
-from .infohash_db import InfohashDb
+from .database import Database
 from .dht import Dht
+from .routing_table import BucketRoutingTable
+from .peer_table import PeerTable
 
 MAX_FETCHERS = 200
 MAX_CONNS_PER_FETCHER = 15
@@ -15,14 +17,14 @@ MAX_TOTAL_CONNS = 950
 logger = logging.getLogger(__name__)
 
 class MetadataFetcher:
-    def __init__(self, infohash_db, dhts):
+    def __init__(self, db, dhts):
         self.dhts = dhts
-        self.infohash_db = infohash_db
 
         self.fetches_in_flight = 0
         self.canceled_with_no_fetch = 0
         self.fetched = 0
 
+        self._db = db
         self._fetchers_semaphore = trio.Semaphore(MAX_FETCHERS)
         self._total_conns_limit = trio.CapacityLimiter(MAX_TOTAL_CONNS)
 
@@ -34,7 +36,7 @@ class MetadataFetcher:
                 if self.dhts[0]._routing_table.size() == 0:
                     await trio.sleep(0.1)
                     continue
-                results = await self.infohash_db.get_some_due_infohashes()
+                results = await self._db.get_some_due_infohashes()
                 for ih, peer_ip, peer_port in results:
                     dht = random.choice(self.dhts)
                     if peer_ip:
@@ -68,7 +70,7 @@ class MetadataFetcher:
                 self.fetches_in_flight -= 1
             if bt.metadata is not None:
                 logger.info(f'Obtained metadata for infohash: {ih.hex()}')
-                await self.infohash_db.store_metadata(ih, bt.metadata)
+                await self._db.store_metadata(ih, bt.metadata)
                 fetched = True
                 nursery.cancel_scope.cancel()
 
@@ -96,7 +98,7 @@ class MetadataFetcher:
         if fetched:
             self.fetched += 1
         else:
-            await self.infohash_db.mark_fetch_metadata_failure(infohash)
+            await self._db.mark_fetch_metadata_failure(infohash)
 
     @property
     def stats(self):
@@ -170,23 +172,33 @@ async def main():
 
     config_logging(args.log_level)
 
-    infohash_db = InfohashDb(args.database)
+    db = Database(args.database)
+    routing_table = BucketRoutingTable(db)
+    peer_table = PeerTable(db)
     seed_host, seed_port = args.seed
     dht = Dht(
         args.port,
+        db=db,
         seed_host=seed_host,
         seed_port=seed_port,
-        infohash_db=infohash_db,
+        routing_table=routing_table,
+        peer_table=peer_table,
         no_expand=False,
         no_index=True,
         readonly=True,
     )
-    fetcher = MetadataFetcher(infohash_db, [dht])
+    fetcher = MetadataFetcher(db, [dht])
 
     async with trio.open_nursery() as nursery:
+        nursery.start_soon(db.run)
+        await db.ready.wait()
+
+        routing_table.dht = dht
+
         nursery.start_soon(dht.run)
+        nursery.start_soon(routing_table.run)
+        nursery.start_soon(peer_table.run)
         nursery.start_soon(fetcher.run)
-        nursery.start_soon(infohash_db.run)
 
         if args.stats:
             nursery.start_soon(
