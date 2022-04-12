@@ -89,12 +89,6 @@ class Dht:
         self._goodness_sem = trio.Semaphore(
             MAX_CONCURRENT_GOODNESS_CHECKS)
 
-        ############## allow a command-line option to pass self-ip
-        #self._ip = '143.178.219.5'
-        self._ip = '172.104.143.244'
-        self.node_id = self._generate_bep42_node_id(self._ip)
-        ##############
-
         self._prev_token_secret = None
         self._cur_token_secret = None
         self._routing_table = routing_table
