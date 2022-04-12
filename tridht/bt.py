@@ -38,6 +38,7 @@ class BtErr(Enum):
     PEER_DOESNT_SUPPORT_UT_METADATA = 13
     NO_METADATA_SIZE = 14
     INVALID_METADATA_HASH = 15
+    OPEN_CONNECTION_TIMEOUT = 16
 
     def __str__(self):
         return {
@@ -56,6 +57,7 @@ class BtErr(Enum):
             BtErr.PEER_DOESNT_SUPPORT_UT_METADATA: 'Peer does not support metadata protocol',
             BtErr.NO_METADATA_SIZE: 'metadata_size not available',
             BtErr.INVALID_METADATA_HASH: 'Received metadata hash does not check out',
+            BtErr.OPEN_CONNECTION_TIMEOUT: 'Timeout connecting to peer',
         }[self]
 
 class _InternalBtError(Exception):
@@ -86,11 +88,14 @@ class BittorrentLoggerAdapter(logging.LoggerAdapter):
 
 class Bittorrent:
     def __init__(self, peer_ip, peer_port, infohash, *,
-                 peer_id=None, timeout=30, save_failure_logs=False):
+                 peer_id=None, timeout=30,
+                 open_connection_timeout=10,
+                 save_failure_logs=False):
         self.peer_ip = peer_ip
         self.peer_port = peer_port
         self.infohash = infohash
         self.timeout = timeout
+        self.open_connection_timeout = open_connection_timeout
         self.save_failure_logs = save_failure_logs
 
         if isinstance(self.peer_ip, IPv4Address):
@@ -148,8 +153,16 @@ class Bittorrent:
 
     async def _run(self):
         try:
-            self._stream = await trio.open_tcp_stream(
-                self.peer_ip, self.peer_port)
+            stream = None
+            with trio.move_on_after(self.open_connection_timeout):
+                stream = await trio.open_tcp_stream(
+                    self.peer_ip, self.peer_port)
+            if stream is None:
+                raise _InternalBtError(
+                    BtErr.OPEN_CONNECTION_TIMEOUT,
+                    'Timeout opening connection to '
+                    f'{self.peer_ip}:{self.peer_port}')
+            self._stream = stream
         except OSError as e:
             raise _InternalBtError(
                 BtErr.CONNECTION_FAILED,
