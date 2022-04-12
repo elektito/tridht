@@ -76,4 +76,4 @@ class PeerTable:
             age=self._announce_age)
         self._peers = defaultdict(set)
         for a in self._announces:
-            self._peers[a.ih].add((a.ip, a.port))
+            self._peers[a.ih].add((a.peer_ip, a.peer_port))

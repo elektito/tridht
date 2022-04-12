@@ -239,7 +239,7 @@ class Announce(Base):
     async def aio_get_announces(session, age: timedelta):
         result = await session.execute(
             select(Announce)
-            .where(Announce.time <= datetime.now() - age)
+            .where(Announce.time >= datetime.now() - age)
         )
 
         # unbind the objects from the session since we're only
