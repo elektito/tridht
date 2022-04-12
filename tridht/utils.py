@@ -230,3 +230,21 @@ def metadata_to_json(metadata):
         ret[non_utf8_key] = value
 
     return ret
+
+
+async def launch_limited(async_fn, *args,
+                         nursery, semaphore, name=None):
+    # launch the given function in the given nursery, limited to the
+    # given semaphore. the task will only be launched after the
+    # semaphore is acquired.
+
+    async def _run(task_status):
+        await semaphore.acquire()
+        task_status.started()
+
+        try:
+            await async_fn(*args)
+        finally:
+            semaphore.release()
+
+    await nursery.start(_run, name=name)

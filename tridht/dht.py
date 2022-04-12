@@ -14,11 +14,14 @@ from .bencode import bencode, bdecode, BDecodingError
 from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
 from .node import Node
+from .utils import launch_limited
 
 logger = logging.getLogger(__name__)
 
 DefaultRoutingTable = BucketRoutingTable
 DefaultPeerTable = PeerTable
+
+MAX_CONCURRENT_GOODNESS_CHECKS = 100
 
 def get_random_node_id():
     node_id = random.randint(0, 2**160)
@@ -83,6 +86,8 @@ class Dht:
         self._next_tid = 0
         self._self_ip_votes = {}
         self._ip = None
+        self._goodness_sem = trio.Semaphore(
+            MAX_CONCURRENT_GOODNESS_CHECKS)
 
         ############## allow a command-line option to pass self-ip
         #self._ip = '143.178.219.5'
@@ -1016,8 +1021,10 @@ class Dht:
         self._nursery.start_soon(self._retry_add_node_after_refresh,
                                 node_to_add, list(nodes_to_refresh))
 
-    def check_node_goodness(self, node):
-        self._nursery.start_soon(self._check_node_goodness, node)
+    async def check_node_goodness(self, node):
+        await launch_limited(self._check_node_goodness, node,
+                             nursery=self._nursery,
+                             semaphore=self._goodness_sem)
 
     def _get_next_tid(self):
         ret = self._next_tid.to_bytes(length=2,

@@ -4,7 +4,7 @@ import random
 import trio
 from urllib.parse import urlsplit
 from .bt import Bittorrent
-from .utils import config_logging
+from .utils import config_logging, launch_limited
 from .database import Database
 from .dht import Dht
 from .routing_table import BucketRoutingTable
@@ -43,16 +43,10 @@ class MetadataFetcher:
                         peers = [(peer_ip, peer_port)]
                     else:
                         peers = []
-                    await self._fetchers_semaphore.acquire()
-                    nursery.start_soon(
-                        self._fetch_metadata_and_release,
-                        ih, dht, peers)
-
-    async def _fetch_metadata_and_release(self, *args, **kwargs):
-        try:
-            await self._fetch_metadata(*args, **kwargs)
-        finally:
-            self._fetchers_semaphore.release()
+                    await launch_limited(
+                        self._fetch_metadata, ih, dht, peers,
+                        nursery=nursery,
+                        semaphore=self._fetchers_semaphore)
 
     async def _fetch_metadata(self, infohash, dht, initial_peers):
         logger.info(f'Looking for metadata for: {infohash.hex()}')
