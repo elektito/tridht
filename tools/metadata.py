@@ -10,9 +10,12 @@ def fmt_value(v):
     if isinstance(v, int):
         return v
     if isinstance(v, list):
-        return str(v)
+        return [
+            (metadata_to_json(i) if isinstance(i, dict) else str(i))
+            for i in v
+        ]
     if isinstance(v, dict):
-        return f'{{dict with {len(v)} key(s)}}'
+        return metadata_to_json(v)
 
     try:
         v = v.decode('utf-8')
