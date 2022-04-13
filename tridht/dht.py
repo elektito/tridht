@@ -312,6 +312,13 @@ class Dht:
                 await trio.sleep(0.1)
                 continue
 
+            if not isinstance(samples, bytes):
+                logger.info(
+                    'sample_infohashes response contains invalid value '
+                    'in response.')
+                logger.debug('Invalid samples value: %s', samples)
+                return
+
             if not interval or not isinstance(interval, int):
                 interval = 60
 

@@ -9,6 +9,7 @@ from .database import Database
 from .dht import Dht
 from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
+from .monitor import Tracer, run_monitor
 
 MAX_FETCHERS = 200
 MAX_CONNS_PER_FETCHER = 15
@@ -162,6 +163,10 @@ async def main():
         '--database', '-d', default='postgresql+asyncpg:///tridht',
         help='The postgres database to use. Defaults to "%(default)s".')
 
+    parser.add_argument(
+        '--monitor', '-m', type=int, default=None, metavar='PORT',
+        help='Run the monitor and have it listen at the given port.')
+
     args = parser.parse_args()
 
     config_logging(args.log_level)
@@ -184,6 +189,12 @@ async def main():
     fetcher = MetadataFetcher(db, [dht])
 
     async with trio.open_nursery() as nursery:
+        if args.monitor is not None:
+            tracer = Tracer()
+            trio.lowlevel.add_instrument(tracer)
+            port = args.monitor
+            nursery.start_soon(run_monitor, tracer, port)
+
         nursery.start_soon(db.run)
         await db.ready.wait()
 
