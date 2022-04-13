@@ -39,7 +39,11 @@ async def load_state(args, dhts):
         logger.debug(f'State file {args.state_file} does not exist.')
         return False, None, None, None, None
 
-    state = json.loads(state)
+    try:
+        state = json.loads(state)
+    except json.JSONDecodeError:
+        return
+
     for dht_state, dht in zip(state['dhts'], dhts):
         dht.load_state(dht_state)
 
