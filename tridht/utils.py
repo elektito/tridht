@@ -240,9 +240,9 @@ async def launch_limited(async_fn, *args,
 
     async def _run(task_status):
         await semaphore.acquire()
-        task_status.started()
 
         try:
+            task_status.started()
             await async_fn(*args)
         finally:
             semaphore.release()
