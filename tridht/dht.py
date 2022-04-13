@@ -359,7 +359,7 @@ class Dht:
             all_nodes = list(self._routing_table.get_all_nodes())
             async with trio.open_nursery() as nursery:
                 for node in all_nodes:
-                    nursery.start_soon(self._check_node_goodness, node)
+                    await self.check_node_goodness(node)
 
             for node in all_nodes:
                 if node.good:
