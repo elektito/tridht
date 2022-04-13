@@ -17,6 +17,7 @@ class BaseRoutingTable:
         self._db = db
         self._save_to_db_period = save_to_db_period
         self._recently_deleted_nodes = []
+        self._recently_added_nodes = []
         self._quit = trio.Event()
         self._cur_save = None
 
@@ -70,8 +71,12 @@ class BaseRoutingTable:
             return
 
         self._cur_save = trio.Event()
-        logger.info('Saving routing table to the database...')
-        await self._db.add_nodes(list(self.get_all_nodes()))
+        if self._recently_added_nodes:
+            logger.info(
+                f'Saving {len(self._recently_added_nodes)} routing '
+                f'table node(s) to the database...')
+            await self._db.add_nodes(self._recently_added_nodes)
+            self._recently_added_nodes = []
         if self._recently_deleted_nodes:
             await self._db.del_nodes(self._recently_deleted_nodes)
             self._recently_deleted_nodes = []
@@ -84,6 +89,11 @@ class BaseRoutingTable:
         nodes = await self._db.get_all_nodes()
         for node in nodes:
             self.add_node(node)
+
+        # don't save these nodes on next save, since we just loaded
+        # them
+        self._recently_added_nodes = []
+
         logger.info(f'Loaded {len(nodes)} node(s).')
 
     def add_or_update_node(self, node_id, node_ip, node_port,
@@ -150,6 +160,7 @@ class BaseRoutingTable:
                 'Not adding node because node id is not valid '
                 f'(length={len(node.id)}).')
             return
+        self._recently_added_nodes.append(node)
         return self._add_node(node)
 
     def _add_node(self, node):
