@@ -351,7 +351,10 @@ class BucketRoutingTable(BaseRoutingTable):
             yield from self._first_half.get_all_nodes()
             yield from self._second_half.get_all_nodes()
         else:
-            yield from iter(self._nodes.values())
+            # create a copy to protect from the list being changed
+            # while iterating
+            nodes = list(self._nodes.values())
+            yield from iter(nodes)
 
     def get_close_nodes(self, node_id, compact=False):
         if self._is_split:
