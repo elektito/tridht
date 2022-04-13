@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 DefaultRoutingTable = BucketRoutingTable
 DefaultPeerTable = PeerTable
 
-MAX_CONCURRENT_GOODNESS_CHECKS = 100
+MAX_CONCURRENT_GOODNESS_CHECKS = 200
+MAX_CONCURRENT_PING_AND_ADD_NODES = 200
 
 def get_random_node_id():
     node_id = random.randint(0, 2**160)
@@ -88,6 +89,8 @@ class Dht:
         self._ip = None
         self._goodness_sem = trio.Semaphore(
             MAX_CONCURRENT_GOODNESS_CHECKS)
+        self._ping_and_add_node_sem = trio.Semaphore(
+            MAX_CONCURRENT_PING_AND_ADD_NODES)
 
         self._prev_token_secret = None
         self._cur_token_secret = None
@@ -483,7 +486,9 @@ class Dht:
 
             async with trio.open_nursery() as nursery:
                 for node in nodes:
-                    nursery.start_soon(self._ping_and_add_node, node)
+                    launch_limited(self._ping_and_add_node, node,
+                                   nursery=nursery,
+                                   semaphore=self._ping_and_add_node_sem)
 
     async def _process_msg(self, data, addr):
         if not data:
