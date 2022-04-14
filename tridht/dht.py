@@ -15,6 +15,7 @@ from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
 from .node import Node
 from .utils import launch_limited
+from .semaphore import Semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +88,12 @@ class Dht:
         self._next_tid = 0
         self._self_ip_votes = {}
         self._ip = None
-        self._goodness_sem = trio.Semaphore(
-            MAX_CONCURRENT_GOODNESS_CHECKS)
-        self._ping_and_add_node_sem = trio.Semaphore(
-            MAX_CONCURRENT_PING_AND_ADD_NODES)
+        self._goodness_sem = Semaphore(
+            MAX_CONCURRENT_GOODNESS_CHECKS,
+            name='_goodness_sem')
+        self._ping_and_add_node_sem = Semaphore(
+            MAX_CONCURRENT_PING_AND_ADD_NODES,
+            name='_ping_and_add_node_sem')
 
         self._prev_token_secret = None
         self._cur_token_secret = None
@@ -125,7 +128,7 @@ class Dht:
         already_tried_for_nodes = set()
         already_returned_peers = set()
         no_response_nodes = set()
-        sem = trio.Semaphore(100)
+        sem = Semaphore(100, name='_fetch_peers/sem')
         async def launch_find_nodes_or_peers(node, nursery):
             async def find_and_release(node, nursery):
                 try:

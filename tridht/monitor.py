@@ -4,6 +4,7 @@ from collections import defaultdict
 from contextvars import ContextVar
 from quart import jsonify
 from quart_trio import QuartTrio
+from .semaphore import all_semaphores
 
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,10 @@ async def stats():
         'live_count_per_name': tracer.live_count_per_name,
         'dead_count_per_name': tracer.dead_count_per_name,
         'scheduled_count_per_name': tracer.scheduled_count_per_name,
+        'semaphores': {
+            f'{"/".join(s.creation_stack)} - {s.qualname}': s.value
+            for s in all_semaphores
+        }
     }
     return jsonify(stats)
 

@@ -10,6 +10,7 @@ from .dht import Dht
 from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
 from .monitor import Tracer, run_monitor
+from .semaphore import Semaphore
 
 MAX_FETCHERS = 200
 MAX_CONNS_PER_FETCHER = 15
@@ -26,7 +27,8 @@ class MetadataFetcher:
         self.fetched = 0
 
         self._db = db
-        self._fetchers_semaphore = trio.Semaphore(MAX_FETCHERS)
+        self._fetchers_semaphore = Semaphore(MAX_FETCHERS,
+                                             name='_fetchers_semaphore')
         self._total_conns_limit = trio.CapacityLimiter(MAX_TOTAL_CONNS)
 
     async def run(self):
