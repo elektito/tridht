@@ -168,6 +168,11 @@ class Node(Base):
 
     @staticmethod
     async def aio_add_nodes(session, nodes):
+        # this (possibly) stops deadlocks that can happen between
+        # multiple instances of DHT nodes in different processes. See:
+        # https://stackoverflow.com/a/59018315/363949
+        nodes = sorted(nodes, key=lambda node: node.id)
+
         for node in nodes:
             await session.execute(
                 Insert(Node)
