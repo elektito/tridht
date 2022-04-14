@@ -138,4 +138,4 @@ async def stats():
 async def run_monitor(tracer, port=7100):
     logger.info(f'Starting monitor on port {port}...')
     tracer_info.set(tracer)
-    await app.run_task(port=port)
+    await app.run_task(port=port, use_reloader=False)
