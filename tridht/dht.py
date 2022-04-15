@@ -489,9 +489,10 @@ class Dht:
 
             async with trio.open_nursery() as nursery:
                 for node in nodes:
-                    launch_limited(self._ping_and_add_node, node,
-                                   nursery=nursery,
-                                   semaphore=self._ping_and_add_node_sem)
+                    await launch_limited(
+                        self._ping_and_add_node, node,
+                        nursery=nursery,
+                        semaphore=self._ping_and_add_node_sem)
 
     async def _process_msg(self, data, addr):
         if not data:
