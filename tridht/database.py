@@ -205,19 +205,17 @@ class Database:
         nodes = sorted(nodes, key=lambda node: node.id)
 
         async with self._pool.acquire() as conn:
-            args = []
+            ids = []
+            ips = []
+            ports = []
+            last_response_times = []
+            last_query_times = []
             for node in nodes:
-                values_caluses = ', '.join(
-                    f'(${i}, ${i+1}, ${i+2}, ${i+3}, ${i+4})'
-                    for i in range(1, len(nodes) * 5 + 1, 5)
-                )
-                args.extend([
-                    node.id,
-                    node.ip,
-                    node.port,
-                    node.last_response_time,
-                    node.last_query_time,
-                ])
+                ids.append(node.id)
+                ips.append(node.ip)
+                ports.append(node.port)
+                last_response_times.append(node.last_response_time)
+                last_query_times.append(node.last_query_time)
             await conn.execute(
                 f'''
                 insert into nodes (
@@ -227,7 +225,12 @@ class Database:
                     last_response_time,
                     last_query_time
                 )
-                values {values_caluses}
+                select *
+                    from unnest($1::bytea[],
+                                $2::inet[],
+                                $3::int[],
+                                $4::timestamp[],
+                                $5::timestamp[])
                 on conflict (id) do update
                 set
                     ip = excluded.ip,
@@ -235,7 +238,7 @@ class Database:
                     last_response_time = excluded.last_response_time,
                     last_query_time = excluded.last_query_time
                 ''',
-                *args,
+                ids, ips, ports, last_response_times, last_query_times,
             )
 
     async def del_nodes(self, nodes):
