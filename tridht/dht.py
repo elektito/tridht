@@ -94,6 +94,7 @@ class Dht:
         self._ping_and_add_node_sem = Semaphore(
             MAX_CONCURRENT_PING_AND_ADD_NODES,
             name='_ping_and_add_node_sem')
+        self._sock_send_lock = trio.Lock()
 
         self._prev_token_secret = None
         self._cur_token_secret = None
@@ -988,7 +989,8 @@ class Dht:
             addr = (str(addr[0]), addr[1])
 
         try:
-            await self._sock.sendto(msg, addr)
+            async with self._sock_send_lock:
+                await self._sock.sendto(msg, addr)
         except OSError as e:
             logger.warning(
                 f'Error sending packet to {addr[0]}:{addr[1]}: {e}')
