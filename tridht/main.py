@@ -140,7 +140,7 @@ async def main():
         help='The file to write the state to and read it from.')
 
     parser.add_argument(
-        '--database', '-d', default='postgresql+asyncpg:///tridht',
+        '--database', '-d', default='postgresql:///tridht',
         help='The postgres database to use. Defaults to "%(default)s".')
 
     parser.add_argument(

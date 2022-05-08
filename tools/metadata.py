@@ -1,7 +1,7 @@
+import trio
 import argparse
+import pgtrio
 from pprint import pprint
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from tridht.bencode import bdecode
 from tridht.utils import metadata_to_json
 
@@ -40,7 +40,7 @@ def fmt_files(v):
     return ret.rstrip('\n')
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(
         description='Read torrent metadata from the database.')
 
@@ -61,37 +61,37 @@ def main():
 
     args = parser.parse_args()
 
-    engine = create_engine(args.database)
-    session = sessionmaker(engine)()
+    async with pgtrio.connect(args.database) as conn:
+        if not args.infohash:
+            result = await conn.execute(
+                'select ih from infohashes where metadata is not null')
+            for ih, in result:
+                print(ih.hex())
+            return
 
-    if not args.infohash:
-        result = session.execute('select ih from infohashes where metadata is not null')
-        for ih, in result.all():
-            print(ih.hex())
-        return
+        ih = bytes.fromhex(args.infohash)
+        result = await conn.execute(
+            'select metadata from infohashes where ih = $1', ih)
+        if not result:
+            print('Infohash not found in the database.')
+            return
 
-    ih = bytes.fromhex(args.infohash)
+        metadata, = result[0]
+        metadata, _ = bdecode(bytes(metadata))
 
-    metadata, = session.execute(
-        'select metadata from infohashes where ih = :ih',
-        {'ih': ih}
-    ).one_or_none()
+        print(f'# {args.infohash}')
 
-    metadata, _ = bdecode(bytes(metadata))
+        for k, v in metadata.items():
+            if k == b'files':
+                print('files:')
+                print(fmt_files(v))
+            else:
+                print(f'{k.decode("ascii")}: {fmt_value(v)}')
 
-    print(f'# {args.infohash}')
-
-    for k, v in metadata.items():
-        if k == b'files':
-            print('files:')
-            print(fmt_files(v))
-        else:
-            print(f'{k.decode("ascii")}: {fmt_value(v)}')
-
-    if args.json:
-        print('\nJSON:')
-        pprint(metadata_to_json(metadata))
+        if args.json:
+            print('\nJSON:')
+            pprint(metadata_to_json(metadata))
 
 
 if __name__ == '__main__':
-    main()
+    trio.run(main)
