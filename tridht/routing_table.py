@@ -16,8 +16,8 @@ class BaseRoutingTable:
         self.stopped = trio.Event()
         self._db = db
         self._save_to_db_period = save_to_db_period
-        self._recently_deleted_nodes = []
-        self._recently_added_nodes = []
+        self._recently_deleted_nodes = set()
+        self._recently_added_nodes = set()
         self._quit = trio.Event()
         self._cur_save = None
 
@@ -76,10 +76,10 @@ class BaseRoutingTable:
                 f'Saving {len(self._recently_added_nodes)} routing '
                 f'table node(s) to the database...')
             await self._db.add_nodes(self._recently_added_nodes)
-            self._recently_added_nodes = []
+            self._recently_added_nodes = set()
         if self._recently_deleted_nodes:
             await self._db.del_nodes(self._recently_deleted_nodes)
-            self._recently_deleted_nodes = []
+            self._recently_deleted_nodes = set()
         logger.info('Routing table saved.')
         self._cur_save.set()
         self._cur_save = None
@@ -92,7 +92,7 @@ class BaseRoutingTable:
 
         # don't save these nodes on next save, since we just loaded
         # them
-        self._recently_added_nodes = []
+        self._recently_added_nodes = set()
 
         logger.info(f'Loaded {len(nodes)} node(s).')
 
@@ -160,7 +160,7 @@ class BaseRoutingTable:
                 'Not adding node because node id is not valid '
                 f'(length={len(node.id)}).')
             return
-        self._recently_added_nodes.append(node)
+        self._recently_added_nodes.add(node)
         return self._add_node(node)
 
     def _add_node(self, node):
@@ -173,14 +173,14 @@ class BaseRoutingTable:
         raise NotImplementedError
 
     def remove(self, node):
-        self._recently_deleted_nodes.append(node)
+        self._recently_deleted_nodes.add(node)
         return self._remove(node)
 
     def _remove(self, node):
-        self._recently_deleted_nodes.extend(nodes)
         raise NotImplementedError
 
     def remove_nodes(self, nodes):
+        self._recently_deleted_nodes.update(nodes)
         return self._remove_nodes(nodes)
 
     def _remove_nodes(self, nodes):
