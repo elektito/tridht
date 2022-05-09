@@ -160,8 +160,10 @@ class BaseRoutingTable:
                 'Not adding node because node id is not valid '
                 f'(length={len(node.id)}).')
             return
-        self._recently_added_nodes.add(node)
-        return self._add_node(node)
+        if self._add_node(node):
+            self._recently_added_nodes.add(node)
+            return True
+        return False
 
     def _add_node(self, node):
         raise NotImplementedError
@@ -253,7 +255,7 @@ class BucketRoutingTable(BaseRoutingTable):
                     return False
 
                 self._split()
-                return self.add_node(node)
+                return self._add_node(node)
             else:
                 bad_node = None
                 for n in self._nodes.values():
@@ -270,6 +272,7 @@ class BucketRoutingTable(BaseRoutingTable):
                 #self.dht.retry_add_node_after_refresh(
                 #    node, self._nodes.values())
                 logger.debug('Not adding node because bucket is full.')
+                return False
 
     def _find_node(self, node_id=None, node_ip=None, node_port=None):
         if self._is_split:
