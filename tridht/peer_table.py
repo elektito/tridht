@@ -3,6 +3,7 @@ import random
 import trio
 from datetime import timedelta, datetime
 from collections import defaultdict
+from ipaddress import IPv4Address
 
 K = 8
 
@@ -19,6 +20,7 @@ class PeerTable:
         self._update_times = {}
 
     async def announce(self, info_hash, node_id, ip, port):
+        assert isinstance(ip, IPv4Address)
         self._peers[info_hash].add((ip, port))
         self._update_times[ip, port] = time.time()
 

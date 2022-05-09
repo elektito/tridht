@@ -181,7 +181,7 @@ class Dht:
                             'peer info length not divisible by 6.')
                         return
                     self.get_peers_with_values += 1
-                    ip = str(IPv4Address(value[:4]))
+                    ip = IPv4Address(value[:4])
                     port = int.from_bytes(value[4:], byteorder='big')
                     if (ip, port) not in already_returned_peers:
                         await return_channel.send((ip, port))
@@ -259,6 +259,7 @@ class Dht:
                     nursery.cancel_scope.cancel()
                     break
                 logger.debug(f'Received {len(data)} bytes from {addr[0]}:{addr[1]}.')
+                addr = IPv4Address(addr[0]), addr[1]
                 nursery.start_soon(self._process_msg, data, addr)
 
         logger.info(f'DHT on port {self.port} finished.')
@@ -396,6 +397,7 @@ class Dht:
         # we don't know the node id of the seed node, but it doesn't
         # really matter here, since
         seed_ip, seed_port = seedaddr
+        seed_ip = IPv4Address(seed_ip)
         seed_node = Node(get_random_node_id(), seed_ip, seed_port)
 
         # now perform a find_node query on a random node id to seed
@@ -757,7 +759,7 @@ class Dht:
             peers_list = []
             for ip, port in peers:
                 compact_peer = (
-                    IPv4Address(ip).packed +
+                    ip.packed +
                     port.to_bytes(length=2,
                                   byteorder='big',
                                   signed=False)
@@ -977,16 +979,14 @@ class Dht:
 
         if msg[b'y'] in [b'r', b'e']:
             ip, port = addr
-            ip = IPv4Address(ip).packed
+            ip = ip.packed
             port = port.to_bytes(length=2,
                                  byteorder='big',
                                  signed=False)
             msg[b'ip'] = ip + port
 
         msg = bencode(msg)
-
-        if isinstance(addr[0], IPv4Address):
-            addr = (str(addr[0]), addr[1])
+        addr = (str(addr[0]), addr[1])
 
         try:
             async with self._sock_send_lock:
@@ -1051,7 +1051,7 @@ class Dht:
             ip = node_or_ip.ip
         else:
             ip = node_or_ip
-        ip = IPv4Address(ip).packed
+        ip = ip.packed
         tok1 = hashlib.sha1(ip + self._cur_token_secret).digest()
         tok2 = hashlib.sha1(ip + self._prev_token_secret).digest()
         return token == tok1 or token == tok2
@@ -1061,7 +1061,7 @@ class Dht:
             ip = node_or_ip.ip
         else:
             ip = node_or_ip
-        ip = IPv4Address(ip).packed
+        ip = ip.packed
         return hashlib.sha1(ip + self._cur_token_secret).digest()
 
     def _parse_find_node_response(self, resp):
@@ -1084,7 +1084,7 @@ class Dht:
             node_ip = node_info[20:24]
             node_port = node_info[24:]
 
-            node_ip = str(IPv4Address(node_ip))
+            node_ip = IPv4Address(node_ip)
             node_port = int.from_bytes(node_port, byteorder='big')
 
             ret_nodes.append(Node(node_id, node_ip, node_port))

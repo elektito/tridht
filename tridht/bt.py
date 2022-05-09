@@ -91,15 +91,13 @@ class Bittorrent:
                  peer_id=None, timeout=30,
                  open_connection_timeout=10,
                  save_failure_logs=False):
+        assert isinstance(peer_ip, IPv4Address)
         self.peer_ip = peer_ip
         self.peer_port = peer_port
         self.infohash = infohash
         self.timeout = timeout
         self.open_connection_timeout = open_connection_timeout
         self.save_failure_logs = save_failure_logs
-
-        if isinstance(self.peer_ip, IPv4Address):
-            self.peer_ip = str(self.peer_ip)
 
         if peer_id:
             self.id = self_peer_id
@@ -156,7 +154,7 @@ class Bittorrent:
             stream = None
             with trio.move_on_after(self.open_connection_timeout):
                 stream = await trio.open_tcp_stream(
-                    self.peer_ip, self.peer_port)
+                    str(self.peer_ip), self.peer_port)
             if stream is None:
                 raise _InternalBtError(
                     BtErr.OPEN_CONNECTION_TIMEOUT,
@@ -361,7 +359,7 @@ class Bittorrent:
                 b'ut_metadata': self._ut_metadata_id,
             },
             b'v': 'Tridht v0.0.1'.encode('utf-8'),
-            b'yourip': IPv4Address(self.peer_ip).packed,
+            b'yourip': self.peer_ip.packed,
         }
         extension_handshake = bencode(extension_handshake)
         await self._send_bt_msg_ext(0, extension_handshake)

@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta
+from ipaddress import IPv4Address
 
 
 class Node:
     def __init__(self, node_id, ip, port):
+        assert isinstance(ip, IPv4Address)
+
         self.id = node_id
         self.intid = int.from_bytes(self.id, byteorder='big')
         self.ip = ip
@@ -18,7 +21,7 @@ class Node:
     def serialize(self):
         return {
             'id': self.id.hex(),
-            'ip': self.ip,
+            'ip': str(self.ip),
             'port': self.port,
             'bad': self.bad,
             'last_response_time': self.last_response_time,
@@ -29,7 +32,7 @@ class Node:
     @classmethod
     def deserialize(cls, state):
         node = cls(bytes.fromhex(state['id']),
-                   state['ip'],
+                   IPv4Address(state['ip']),
                    state['port'])
         node.bad = state['bad']
         node.last_response_time = state['last_response_time']
