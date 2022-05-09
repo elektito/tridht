@@ -10,7 +10,7 @@ from ipaddress import IPv4Address
 from copy import copy
 from trio import socket
 from crc32c import crc32c
-from .bencode import bencode, bdecode, BDecodingError
+from .bencode import bencode, bdecode, BDecodingError, BTemplate, BParam
 from .routing_table import BucketRoutingTable
 from .peer_table import PeerTable
 from .node import Node
@@ -104,6 +104,192 @@ class Dht:
         self._sample_infohash_interval = sample_infohash_interval
         self._update_infohash_sample()
 
+        self._get_peers_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'q',
+            b'q': b'get_peers',
+            b'v': b'TD\x00\x01',
+            b'a': {
+                b'id': BParam('id'),
+                b'info_hash': BParam('infohash'),
+            }
+        })
+
+        self._ping_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'q',
+            b'q': b'ping',
+            b'v': b'TD\x00\x01',
+            b'a': {
+                b'id': BParam('id'),
+            },
+        })
+
+        self._find_node_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'q',
+            b'q': b'find_node',
+            b'v': b'TD\x00\x01',
+            b'a': {
+                b'id': BParam('id'),
+                b'target': BParam('target'),
+            },
+        })
+
+        self._sample_template = BTemplate({
+            b'y': b'q',
+            b'q': b'sample_infohashes',
+            b'v': b'TD\x00\x01',
+            b'a': {
+                b'id': BParam('id'),
+                b'target': BParam('target'),
+            },
+        })
+
+        self._resp_err_no_method_name_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [203, b'No method name'],
+        })
+
+        self._resp_err_no_query_args_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [203, b'No query arguments'],
+        })
+
+        resp = self._resp_err_no_node_id_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [203, b'No node id'],
+        })
+
+        resp = self._resp_err_method_unknown_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [204, b'Method unknown'],
+        })
+
+        self._resp_err_find_node_no_target_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [203, b'find_node query has no target'],
+        })
+
+        self._resp_err_get_peers_no_infohash_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [203, b'get_peers query has no info_hash'],
+        })
+
+        self._resp_err_announce_no_ih_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [203, b'announce_peer query has no info_hash'],
+        })
+
+        self._resp_err_announce_no_token_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [203, b'announce_peer query has no token'],
+        })
+
+        self._resp_err_announce_no_port_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [
+                203,
+                b'announce_peer query has no port or implied_port'
+            ],
+        })
+
+        self._resp_err_announce_invalid_port_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'e',
+            b'v': b'TD\x00\x01',
+            b'e': [
+                203,
+                b'announce_peer query has invalid implied_port '
+                b'value',
+            ],
+        })
+
+        self._resp_announce_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'r',
+            b'v': b'TD\x00\x01',
+            b'r': {
+                b'id': BParam('id'),
+            },
+        })
+
+        resp = self._resp_ping_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'r',
+            b'v': b'TD\x00\x01',
+            b'r': {
+                b'id': BParam('id'),
+            },
+        })
+
+        self._resp_find_node_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'r',
+            b'v': b'TD\x00\x01',
+            b'r': {
+                b'id': BParam('id'),
+                b'nodes': BParam('nodes'),
+            }
+        })
+
+        self._resp_get_peers_with_peers_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'r',
+            b'v': b'TD\x00\x01',
+            b'r': {
+                b'id': BParam('id'),
+                b'token': BParam('token'),
+                b'peers': BParam('peers'),
+            },
+        })
+
+        self._resp_get_peers_with_nodes_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'r',
+            b'v': b'TD\x00\x01',
+            b'r': {
+                b'id': BParam('id'),
+                b'token': BParam('token'),
+                b'nodes': BParam('nodes'),
+            },
+        })
+
+        self._resp_sample_template = BTemplate({
+            b't': BParam('tid'),
+            b'y': b'r',
+            b'r': {
+                b'id': BParam('id'),
+                b'nodes': BParam('nodes'),
+                b'interval': self._sample_infohash_interval,
+                b'num': BParam('num'),
+                b'samples': BParam('samples'),
+            }
+        })
+
+        ##xx make sure v key is in all templates (add asserts?)
+        ##xx set ro on all templates if readonly
+        ##xx set version from a variable
+        ##xx maybe a create_template function that sets stuff like "v" and "tid" (and "id"?)
+
     @property
     def stats(self):
         return {
@@ -151,19 +337,12 @@ class Dht:
             if not self._validate_bep42_node_id(node.id, node.ip):
                 return
 
-            msg = {
-                b't': self._get_next_tid(),
-                b'y': b'q',
-                b'q': b'get_peers',
-                b'a': {
-                    b'id': self.node_id,
-                    b'info_hash': infohash,
-                },
-            }
-
             self.get_peers_in_flight += 1
             try:
-                resp = await self._send_and_get_response(msg, node)
+                resp = await self._send_and_get_response(
+                    node, self._get_peers_template,
+                    infohash=infohash,
+                )
             finally:
                 self.get_peers_in_flight -= 1
 
@@ -641,31 +820,22 @@ class Dht:
         method = msg.get(b'q')
         if method is None:
             logger.info('Received query does not have a method name.')
-            resp = {
-                b't': tid,
-                b'y': b'e',
-                b'e': [203, b'No method name'],
-            }
+            resp = self._resp_err_no_method_name_template
+            templ_args = {}
             found_errors = True
 
         args = msg.get(b'a')
         if args is None:
             logger.info('Received query does not have any arguments.')
-            resp = {
-                b't': tid,
-                b'y': b'e',
-                b'e': [203, b'No query arguments'],
-            }
+            resp = self._resp_err_no_query_args_template
+            templ_args = {}
             found_errors = True
 
         node_id = args.get(b'id')
         if node_id is None:
             logger.info('Received query does not have a node id.')
-            resp = {
-                b't': tid,
-                b'y': b'e',
-                b'e': [203, b'No node id'],
-            }
+            resp = self._resp_err_no_node_id_template
+            templ_args = {}
             found_errors = True
 
         if not self._validate_bep42_node_id(node_id, addr[0]):
@@ -677,22 +847,19 @@ class Dht:
         if not found_errors:
             if method == b'ping':
                 logger.info(f'Got a ping query from {node_id.hex()}')
-                resp = {
-                    b't': tid,
-                    b'y': b'r',
-                    b'r': {b'id': self.node_id},
-                }
+                resp = self._resp_ping_template
+                templ_args = {}
             elif method == b'find_node':
-                resp = await self._process_query_find_node(
+                resp, templ_args = await self._process_query_find_node(
                     msg, tid, addr, args, node_id)
             elif method == b'get_peers':
-                resp = await self._process_query_get_peers(
+                resp, templ_args = await self._process_query_get_peers(
                     msg, tid, addr, args, node_id)
             elif method == b'announce_peer':
-                resp = await self._process_query_announce_peer(
+                resp, templ_args = await self._process_query_announce_peer(
                     msg, tid, addr, args, node_id)
             elif method == b'sample_infohashes':
-                resp = await self._process_query_sample_infohashes(
+                resp, templ_args = await self._process_query_sample_infohashes(
                     msg, tid, addr, args, node_id)
             else:
                 try:
@@ -701,14 +868,10 @@ class Dht:
                         f'{method.decode("ascii")}')
                 except UnicodeDecodeError:
                     logger.info(f'Unknown query received: {method}')
-                resp = {
-                    b't': tid,
-                    b'y': b'e',
-                    b'e': [204, b'Method unknown'],
-                }
+                resp = self._resp_err_method_unknown_template
 
         if resp is not None:
-            await self._send_msg(resp, addr)
+            await self._send_msg(addr, resp, tid=tid, **templ_args)
 
             self._routing_table.add_or_update_node(
                 node_id, addr[0], addr[1], interaction='query')
@@ -717,11 +880,7 @@ class Dht:
         target = args.get(b'target')
         if target is None:
             logger.info('find_node query has no target.')
-            return {
-                b't': tid,
-                b'y': b'e',
-                b'e': [203, b'find_node query has no target'],
-            }
+            return self._resp_err_find_node_no_target_template, {}
 
         logger.info(
             f'Got a find_node query from {node_id.hex()} for node '
@@ -729,24 +888,13 @@ class Dht:
 
         nodes = self._routing_table.get_close_nodes(
             target, compact=True)
-        return {
-            b't': tid,
-            b'y': b'r',
-            b'r': {
-                b'id': self.node_id,
-                b'nodes': nodes,
-            }
-        }
+        return self._resp_find_node_template, {'nodes': nodes}
 
     async def _process_query_get_peers(self, msg, tid, addr, args, node_id):
         info_hash = args.get(b'info_hash')
         if info_hash is None:
             logger.info('get_peers query has no info_hash.')
-            return {
-                b't': tid,
-                b'y': b'e',
-                b'e': [203, b'get_peers query has no info_hash'],
-            }
+            return self._resp_err_get_peers_no_infohash_template, {}
 
         logger.info(
             f'Got a get_peers query from {node_id.hex()} for info_hash '
@@ -765,26 +913,16 @@ class Dht:
                                   signed=False)
                 )
                 peers_list.append(compact_peer)
-            return {
-                b't': tid,
-                b'y': b'r',
-                b'r': {
-                    b'id': self.node_id,
-                    b'token': self._get_token(addr[0]),
-                    b'peers': peers_list,
-                },
+            return self._resp_get_peers_with_peers_template, {
+                'token': self._get_token(addr[0]),
+                'peers': peers_list,
             }
 
         nodes = self._routing_table.get_close_nodes(info_hash,
                                                     compact=True)
-        return {
-            b't': tid,
-            b'y': b'r',
-            b'r': {
-                b'id': self.node_id,
-                b'token': self._get_token(addr[0]),
-                b'nodes': nodes,
-            }
+        return self._resp_get_peers_with_nodes_template, {
+            'token': self._get_token(addr[0]),
+            'nodes': nodes,
         }
 
     async def _process_query_announce_peer(self, msg, tid, addr,
@@ -792,11 +930,7 @@ class Dht:
         info_hash = args.get(b'info_hash')
         if info_hash is None:
             logger.info('announce_peer query has no info_hash.')
-            return {
-                b't': tid,
-                b'y': b'e',
-                b'e': [203, b'announce_peer query has no info_hash'],
-            }
+            return self._resp_err_announce_no_ih_template, {}
 
         logger.info(
             f'Got an announce_peer query from {node_id.hex()} for '
@@ -805,11 +939,7 @@ class Dht:
         token = args.get(b'token')
         if token is None:
             logger.info('announce_peer query has no token.')
-            return {
-                b't': tid,
-                b'y': b'e',
-                b'e': [203, b'announce_peer query has no token'],
-            }
+            return self._resp_err_announce_no_token_template, {}
 
         if not self._is_token_valid(token, addr[0]):
             logger.info('Invalid token in announce_peer query.')
@@ -818,35 +948,16 @@ class Dht:
         port = args.get(b'port')
         implied_port = args.get(b'implied_port')
         if port is None and implied_port is None:
-            return {
-                b't': tid,
-                b'y': b'e',
-                b'e': [
-                    203,
-                    b'announce_peer query has no port or implied_port'
-                ],
-            }
+            return self._resp_err_announce_no_port_template, {}
         if implied_port is not None and implied_port not in [0, 1]:
-            return {
-                b't': tid,
-                b'y': b'e',
-                b'e': [
-                    203,
-                    b'announce_peer query has invalid implied_port '
-                    b'value',
-                ],
-            }
+            return self._resp_err_announce_invalid_port_template, {}
         if implied_port == 1:
             port = addr[1]
 
         await self._peer_table.announce(
             info_hash, node_id, addr[0], port)
 
-        return {
-            b't': tid,
-            b'y': b'r',
-            b'r': {b'id': self.node_id},
-        }
+        return self._resp_announce_template, {}
 
     async def _process_query_sample_infohashes(self, msg, tid, addr,
                                                args, node_id):
@@ -862,16 +973,10 @@ class Dht:
             f'Got an sample_infohashes query from {node_id.hex()} with '
             f'target {target.hex()}')
 
-        return {
-            b't': tid,
-            b'y': b'r',
-            b'r': {
-                b'id': self.node_id,
-                b'nodes': nodes,
-                b'interval': self._sample_infohash_interval,
-                b'num': self._peer_table.size(),
-                b'samples': self._cur_infohash_sample,
-            }
+        return self._resp_sample_template, {
+            'nodes': nodes,
+            'num': self._peer_table.size(),
+            'samples': self._cur_infohash_sample,
         }
 
     def _process_self_ip(self, msg, voter_addr):
@@ -927,14 +1032,17 @@ class Dht:
         node.ever_responded = True
         self._routing_table.add_node(node)
 
-    async def _send_and_get_response(self, msg, node):
-        assert isinstance(msg, dict)
+    async def _send_and_get_response(self, node, msg_template,
+                                     **template_args):
+        assert isinstance(msg_template, BTemplate)
+
+        #####xx maybe set node_id in __init__ and then update if it changes
 
         resp = None
         retries = self.retries
         while resp is None and retries >= 0:
             tid = self._get_next_tid()
-            msg[b't'] = tid
+            template_args['tid'] = tid
 
             send_channel, recv_channel = trio.open_memory_channel(0)
 
@@ -942,7 +1050,7 @@ class Dht:
             # query arrives, it's sent to us.
             self._response_channels[tid] = send_channel
 
-            await self._send_msg(msg, node)
+            await self._send_msg(node, msg_template, **template_args)
 
             resp = None
             with trio.move_on_after(self.response_timeout):
@@ -966,27 +1074,28 @@ class Dht:
 
         return resp
 
-    async def _send_msg(self, msg, node):
+    async def _send_msg(self, node, msg_template, **template_args):
         if isinstance(node, Node):
             addr = (node.ip, node.port)
         else:
             addr = node
 
-        msg[b'v'] = b'TD\x00\x01'
+        ip, port = addr
+        port = port.to_bytes(length=2, byteorder='big', signed=False)
+        template_args['ip'] = ip.packed + port
 
-        if self.readonly:
-            msg[b'ro'] = 1
+        template_args['id'] = self.node_id
 
-        if msg[b'y'] in [b'r', b'e']:
-            ip, port = addr
-            ip = ip.packed
-            port = port.to_bytes(length=2,
-                                 byteorder='big',
-                                 signed=False)
-            msg[b'ip'] = ip + port
-
-        msg = bencode(msg)
+        msg = msg_template.encode(**template_args)
         addr = (str(addr[0]), addr[1])
+
+        ####
+        dec, _ = bdecode(msg)
+        if dec[b'y'] == b'q':
+            assert isinstance(dec[b'a'][b'id'], bytes)
+        elif dec[b'y'] == b'r':
+            assert isinstance(dec[b'r'][b'id'], bytes)
+        ####
 
         try:
             async with self._sock_send_lock:
@@ -996,37 +1105,19 @@ class Dht:
                 f'Error sending packet to {addr[0]}:{addr[1]}: {e}')
 
     async def _ping_node(self, node):
-        msg = {
-            b'y': b'q',
-            b'q': b'ping',
-            b'a': {
-                b'id': self.node_id,
-            },
-        }
-        return await self._send_and_get_response(msg, node)
+        return await self._send_and_get_response(
+            node, self._ping_template)
 
     async def _perform_find_node(self, dest_node, sought_node_id):
-        msg = {
-            b'y': b'q',
-            b'q': b'find_node',
-            b'a': {
-                b'id': self.node_id,
-                b'target': sought_node_id,
-            },
-        }
-        return await self._send_and_get_response(msg, dest_node)
+        return await self._send_and_get_response(
+            dest_node, self._find_node_template,
+            target=sought_node_id)
 
     async def _perform_sample_infohashes(self, dest_node,
                                          sought_node_id):
-        msg = {
-            b'y': b'q',
-            b'q': b'sample_infohashes',
-            b'a': {
-                b'id': self.node_id,
-                b'target': sought_node_id,
-            },
-        }
-        return await self._send_and_get_response(msg, dest_node)
+        return await self._send_and_get_response(
+            dest_node, self._sample_template,
+            target=sought_node_id)
 
     def retry_add_node_after_refresh(self, node_to_add,
                                      nodes_to_refresh):
