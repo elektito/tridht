@@ -160,3 +160,95 @@ def bencode(value):
 
     return func(value)
 
+
+class BParam:
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return f'<BParam {self.name}>'
+
+
+class BTemplate:
+    def __init__(self, template):
+        self.template = template
+
+        self._compiled_template = []
+        self._compile(self.template)
+        self._compact_compile_template()
+
+    def encode(self, **kwargs):
+        enc = b''
+        for i in self._compiled_template:
+            if isinstance(i, BParam):
+                try:
+                    enc += bencode(kwargs[i.name])
+                except KeyError:
+                    raise KeyError(
+                        f'Argument {i.name} not found for encoding '
+                        f'BTemplate')
+            else:
+                enc += i
+        return enc
+
+    def _compile(self, value):
+        if isinstance(value, BParam):
+            self._compiled_template.append(value)
+            return
+
+        funcs = {
+            bytes: self._compile_string,
+            int: self._compile_int,
+            list: self._compile_list,
+            dict: self._compile_dict,
+        }
+
+        func = funcs.get(type(value))
+        if func is None:
+            types_str = ', '.join(t.__name__ for t in funcs)
+            raise TypeError(
+                f'Data to bencode should be one of: {types_str} '
+                f'(got {type(value).__name__})')
+
+        func(value)
+
+    def _compile_string(self, value):
+        self._compiled_template.append(bencode_string(value))
+
+    def _compile_int(self, value):
+        self._compiled_template.append(bencode_int(value))
+
+    def _compile_dict(self, value):
+        if not all(isinstance(k, (bytes, BParam)) for k in value):
+            raise TypeError('Dictionary keys should all be bytes values.')
+        self._compiled_template.append(b'd')
+        for k, v in value.items():
+            if isinstance(k, BParam):
+                self._compiled_template.append(k)
+            else:
+                self._compiled_template.append(bencode_string(k))
+            if isinstance(v, BParam):
+                self._compiled_template.append(v)
+            else:
+                self._compile(v)
+        self._compiled_template.append(b'e')
+
+    def _compile_list(self, value):
+        self._compiled_template.append(b'l')
+        for i in value:
+            if isinstance(i, BParam):
+                self._compiled_template.append(i)
+            else:
+                self._compile(i)
+        self._compiled_template.append(b'e')
+
+    def _compact_compile_template(self):
+        compact = []
+        for i in self._compiled_template:
+            if isinstance(i, BParam) or \
+               len(compact) == 0 or \
+               isinstance(compact[-1], BParam):
+                compact.append(i)
+            else:
+                compact[-1] += i
+        self._compiled_template = compact

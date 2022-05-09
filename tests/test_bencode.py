@@ -1,5 +1,7 @@
 import pytest
-from tridht.bencode import bencode, bdecode, BDecodingError
+from tridht.bencode import (
+    bencode, bdecode, BDecodingError, BTemplate, BParam
+)
 
 
 def test_bdecode_invalid_type():
@@ -243,3 +245,33 @@ def test_bencode_mixed1():
 def test_bencode_mixed2():
     data = bencode({b'a': 1, b'b': {}, b'c': {b'x': [1]}})
     assert data == b'd1:ai1e1:bde1:cd1:xli1eeee'
+
+
+def test_template():
+    template = BTemplate({
+        b'foo': b'bar',
+        b'spam': BParam('spam'),
+        b'eggs': {
+            b'type': b'white',
+            b'count': BParam('egg_count'),
+            b'names': BParam('egg_names'),
+        },
+        b'nums': [1, 2, BParam('missing_num'), 4],
+    })
+    enc = template.encode(
+        spam=b'lots',
+        egg_count=100,
+        egg_names=[b'humpty', b'dumpty'],
+        missing_num=3,
+    )
+    dec, _ = bdecode(enc)
+    assert dec == {
+        b'foo': b'bar',
+        b'spam': b'lots',
+        b'eggs': {
+            b'type': b'white',
+            b'count': 100,
+            b'names': [b'humpty', b'dumpty'],
+        },
+        b'nums': [1, 2, 3, 4],
+    }
